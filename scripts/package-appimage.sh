@@ -26,7 +26,7 @@ if [[ "$(uname -m)" != "x86_64" ]]; then
 fi
 
 if [[ ! -f "$root/.deps/msquic/include/msquic.h" ]]; then
-  echo "MsQuic is missing; run 'make setup-msquic' first" >&2
+  echo "MsQuic is missing; run 'make client' first" >&2
   exit 1
 fi
 

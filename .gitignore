@@ -5,7 +5,6 @@ backend/coverage.out
 # CMake and C++ builds
 client/build/
 client/build-appimage/
-client/build-macos/
 client/cmake-build-*/
 dist/
 .deps/

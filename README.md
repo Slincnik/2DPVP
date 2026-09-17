@@ -29,11 +29,9 @@ make matchserver
 make smoke-quic
 ```
 
-Сборка клиента:
+Сборка клиента (генерация protobuf и подготовка MsQuic выполняются автоматически):
 
 ```bash
-make setup-msquic  # один раз: локально скачивает официальный MsQuic 2.5.7
-make proto
 make client
 ```
 
@@ -53,19 +51,19 @@ Gateway URL можно переопределить через `GATEWAY_URL`. У
 ### Сборка клиента на macOS / Apple Silicon
 
 На Mac с M1/M2/M3 нужен нативный ARM64 build toolchain. Установи Xcode
-Command Line Tools и Homebrew, затем из корня проекта выполни:
+Command Line Tools и Homebrew, затем зависимости:
 
 ```bash
 xcode-select --install  # если ещё не установлен
 brew install buf cmake protobuf abseil libmsquic
-make client-macos
+make client
 ```
 
-Готовый бинарник будет в `client/build-macos/pvp_duel_client`. Gateway можно
+Готовый бинарник будет в `client/build/pvp_duel_client`. Gateway можно
 переопределить при запуске:
 
 ```bash
-GATEWAY_URL=http://192.168.88.72:8080 ./client/build-macos/pvp_duel_client
+GATEWAY_URL=http://192.168.88.72:8080 ./client/build/pvp_duel_client
 ```
 
 CMake автоматически находит Homebrew в `/opt/homebrew` (Apple Silicon) или
@@ -77,7 +75,6 @@ CMake автоматически находит Homebrew в `/opt/homebrew` (App
 Собрать x86_64 AppImage с адресом Gateway по умолчанию:
 
 ```bash
-make setup-msquic  # если ещё не запускался
 GATEWAY_URL=http://192.168.1.10:8080 make appimage
 ```
 
@@ -109,7 +106,7 @@ chmod +x PvPDuel-x86_64.AppImage
 - `buf` или `protoc` с плагинами `protoc-gen-go` и `protoc-gen-go-grpc`
   для `make proto`
 - CMake 3.24+, C++20-компилятор и OpenSSL development headers для клиента
-- `curl`, `dpkg-deb` и `apt-get download` для `make setup-msquic`
+- Linux-клиенту дополнительно нужны `curl`, `dpkg-deb` и доступ `apt-get download` к пакету `libxdp1`; MsQuic подготавливается автоматически через `make client`
 
 Module path сейчас `github.com/dprishchepa/2d-pvp-duel`; поменяйте его до
 первого внешнего релиза, если URL репозитория будет другим.
