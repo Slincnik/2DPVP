@@ -1,0 +1,62 @@
+syntax = "proto3";
+
+package game.v1;
+
+option go_package = "github.com/dprishchepa/2d-pvp-duel/backend/internal/proto/game/v1;gamev1";
+
+message AuthenticateRequest {
+  string match_token = 1;
+  string player_id = 2;
+}
+
+message PlayerInput {
+  uint32 tick = 1;
+  sint32 move_x = 2;
+  sint32 move_y = 3;
+  bool attack = 4;
+}
+
+message PlayerState {
+  string player_id = 1;
+  sint32 position_x = 2;
+  sint32 position_y = 3;
+  int32 hp = 4;
+  uint32 last_acked_input_tick = 5;
+}
+
+enum MatchStatus {
+  MATCH_STATUS_ACTIVE = 0;
+  MATCH_STATUS_FINISHED = 1;
+}
+
+message WorldSnapshot {
+  uint32 server_tick = 1;
+  repeated PlayerState players = 2;
+  MatchStatus status = 3;
+  string winner_player_id = 4;
+}
+
+message ClientEnvelope {
+  oneof payload {
+    AuthenticateRequest authenticate = 1;
+    PlayerInput input = 2;
+  }
+}
+
+message MatchReady {
+  bool datagrams_enabled = 1;
+  uint32 tick_rate = 2;
+}
+
+message ProtocolError {
+  string code = 1;
+  string message = 2;
+}
+
+message ServerEnvelope {
+  oneof payload {
+    WorldSnapshot snapshot = 1;
+    ProtocolError error = 2;
+    MatchReady ready = 3;
+  }
+}
