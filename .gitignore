@@ -4,7 +4,9 @@ backend/coverage.out
 
 # CMake and C++ builds
 client/build/
+client/build-appimage/
 client/cmake-build-*/
+dist/
 .deps/
 
 # Generated protobuf code

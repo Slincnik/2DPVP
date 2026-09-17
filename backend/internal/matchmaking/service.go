@@ -10,10 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var (
-	ErrInvalidPlayer  = errors.New("matchmaking: invalid player")
-	ErrAlreadyMatched = errors.New("matchmaking: match already created")
-)
+var ErrInvalidPlayer = errors.New("matchmaking: invalid player")
 
 type Status string
 
@@ -129,10 +126,8 @@ func (s *Service) PlayerStatus(playerID string) Result {
 func (s *Service) Leave(playerID string) error {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	current, ok := s.entries[playerID]
-	if ok && current.result.Status == StatusMatched {
-		return ErrAlreadyMatched
-	}
+	// Removing a matched result lets a client acknowledge its completed match
+	// before joining the queue again. The opponent owns its separate entry.
 	delete(s.entries, playerID)
 	return nil
 }

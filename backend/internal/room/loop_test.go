@@ -9,7 +9,7 @@ import (
 func TestLoop_RunProcessesQueuedInputBeforeTick(t *testing.T) {
 	t.Parallel()
 
-	duel := newRoom(t)
+	duel := newActiveRoom(t)
 	inputs := make(chan QueuedInput, 1)
 	snapshots := make(chan Snapshot, 1)
 	ticks := make(chan time.Time, 1)
@@ -22,8 +22,8 @@ func TestLoop_RunProcessesQueuedInputBeforeTick(t *testing.T) {
 	ticks <- time.Now()
 
 	snapshot := receiveSnapshot(t, snapshots)
-	if snapshot.Players[0].PositionX != MovementPerTick {
-		t.Errorf("alice position x = %d, want %d", snapshot.Players[0].PositionX, MovementPerTick)
+	if snapshot.Players[0].PositionX != PlayerASpawnX+MovementPerTick {
+		t.Errorf("alice position x = %d, want %d", snapshot.Players[0].PositionX, PlayerASpawnX+MovementPerTick)
 	}
 
 	cancel()
@@ -35,7 +35,9 @@ func TestLoop_RunProcessesQueuedInputBeforeTick(t *testing.T) {
 func TestLoop_RunReturnsAfterFinishedMatch(t *testing.T) {
 	t.Parallel()
 
-	duel := newRoom(t)
+	duel := newActiveRoom(t)
+	duel.players[0].PositionX = 0
+	duel.players[1].PositionX = 0
 	duel.players[0].HP = AttackDamage
 	duel.players[1].HP = AttackDamage
 	inputs := make(chan QueuedInput, 2)
@@ -54,6 +56,32 @@ func TestLoop_RunReturnsAfterFinishedMatch(t *testing.T) {
 	}
 	if err := <-done; err != nil {
 		t.Errorf("Run() error = %v", err)
+	}
+}
+
+func TestLoop_TerminalSnapshotReplacesQueuedLossySnapshot(t *testing.T) {
+	t.Parallel()
+
+	duel := newActiveRoom(t)
+	duel.players[0].PositionX = 0
+	duel.players[1].PositionX = 0
+	duel.players[1].HP = AttackDamage
+	inputs := make(chan QueuedInput, 1)
+	snapshots := make(chan Snapshot, 1)
+	snapshots <- Snapshot{ServerTick: 1, Status: MatchActive}
+	ticks := make(chan time.Time, 1)
+	loop := NewLoop(duel, inputs, snapshots)
+	done := runLoop(loop, t.Context(), ticks)
+
+	inputs <- QueuedInput{PlayerID: "alice", Input: Input{Tick: 1, Attack: true}}
+	ticks <- time.Now()
+
+	if err := <-done; err != nil {
+		t.Errorf("Run() error = %v", err)
+	}
+	terminal := receiveSnapshot(t, snapshots)
+	if terminal.Status != MatchFinished || terminal.FinishReason != FinishReasonKO {
+		t.Fatalf("published snapshot = status %d reason %d, want terminal KO", terminal.Status, terminal.FinishReason)
 	}
 }
 

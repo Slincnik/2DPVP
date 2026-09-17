@@ -24,9 +24,18 @@ message PlayerState {
   uint32 last_acked_input_tick = 5;
 }
 
+// ACTIVE and FINISHED retain their original numeric values for wire compatibility.
 enum MatchStatus {
   MATCH_STATUS_ACTIVE = 0;
   MATCH_STATUS_FINISHED = 1;
+  MATCH_STATUS_WAITING = 2;
+  MATCH_STATUS_COUNTDOWN = 3;
+}
+
+enum MatchFinishReason {
+  MATCH_FINISH_REASON_UNSPECIFIED = 0;
+  MATCH_FINISH_REASON_KO = 1;
+  MATCH_FINISH_REASON_TIME_LIMIT = 2;
 }
 
 message WorldSnapshot {
@@ -34,6 +43,8 @@ message WorldSnapshot {
   repeated PlayerState players = 2;
   MatchStatus status = 3;
   string winner_player_id = 4;
+  uint32 countdown_ticks_remaining = 5;
+  uint32 match_ticks_remaining = 6;
 }
 
 message ClientEnvelope {
@@ -53,10 +64,27 @@ message ProtocolError {
   string message = 2;
 }
 
+// MatchStart and MatchEnd are sent on the reliable server stream. WorldSnapshot
+// remains a lossy datagram update and is never the only source of a terminal result.
+message MatchStart {
+  WorldSnapshot initial_snapshot = 1;
+  uint32 tick_rate = 2;
+  uint32 countdown_ticks = 3;
+  uint32 match_duration_ticks = 4;
+}
+
+message MatchEnd {
+  WorldSnapshot final_snapshot = 1;
+  string winner_player_id = 2;
+  MatchFinishReason reason = 3;
+}
+
 message ServerEnvelope {
   oneof payload {
     WorldSnapshot snapshot = 1;
     ProtocolError error = 2;
     MatchReady ready = 3;
+    MatchStart match_start = 4;
+    MatchEnd match_end = 5;
   }
 }

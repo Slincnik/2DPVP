@@ -16,10 +16,10 @@ type QueuedInput struct {
 type Loop struct {
 	room      *Room
 	inputs    <-chan QueuedInput
-	snapshots chan<- Snapshot
+	snapshots chan Snapshot
 }
 
-func NewLoop(room *Room, inputs <-chan QueuedInput, snapshots chan<- Snapshot) *Loop {
+func NewLoop(room *Room, inputs <-chan QueuedInput, snapshots chan Snapshot) *Loop {
 	return &Loop{
 		room:      room,
 		inputs:    inputs,
@@ -54,7 +54,9 @@ func (l *Loop) Run(ctx context.Context, ticks <-chan time.Time) error {
 
 			l.drainInputs()
 			snapshot := l.room.Step()
-			l.publish(snapshot)
+			if !l.publish(ctx, snapshot) {
+				return nil
+			}
 			if snapshot.Status == MatchFinished {
 				return nil
 			}
@@ -83,9 +85,31 @@ func (l *Loop) submit(queued QueuedInput) {
 	_ = l.room.SubmitInput(queued.PlayerID, queued.Input)
 }
 
-func (l *Loop) publish(snapshot Snapshot) {
+func (l *Loop) publish(ctx context.Context, snapshot Snapshot) bool {
+	select {
+	case l.snapshots <- snapshot:
+		return true
+	default:
+	}
+
+	// Keep only the newest visual update. A terminal snapshot replaces any
+	// queued update and then blocks until accepted (or canceled), so completion
+	// can never be lost to snapshot backpressure.
+	select {
+	case <-l.snapshots:
+	default:
+	}
+	if snapshot.Status == MatchFinished {
+		select {
+		case l.snapshots <- snapshot:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
 	select {
 	case l.snapshots <- snapshot:
 	default:
 	}
+	return true
 }

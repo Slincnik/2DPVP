@@ -7,17 +7,22 @@ import (
 )
 
 const (
-	TickRate        = 30
-	InitialHP       = 100
-	MovementPerTick = 10
-	AttackDamage    = 20
-	AttackRange     = 80
-	AttackCooldown  = 15
+	TickRate           = 30
+	CountdownTicks     = 3 * TickRate
+	MatchDurationTicks = 90 * TickRate
+	InitialHP          = 100
+	MovementPerTick    = 10
+	AttackDamage       = 20
+	AttackRange        = 80
+	AttackCooldown     = 15
 
 	ArenaMinX = -500
 	ArenaMaxX = 500
 	ArenaMinY = -300
 	ArenaMaxY = 300
+
+	PlayerASpawnX = -250
+	PlayerBSpawnX = 250
 )
 
 var (
@@ -28,8 +33,19 @@ var (
 type MatchStatus uint8
 
 const (
+	// Keep Active and Finished first to mirror their established protobuf values.
 	MatchActive MatchStatus = iota
 	MatchFinished
+	MatchWaiting
+	MatchCountdown
+)
+
+type FinishReason uint8
+
+const (
+	FinishReasonNone FinishReason = iota
+	FinishReasonKO
+	FinishReasonTimeLimit
 )
 
 type Input struct {
@@ -48,10 +64,13 @@ type PlayerState struct {
 }
 
 type Snapshot struct {
-	ServerTick uint32
-	Players    [2]PlayerState
-	Status     MatchStatus
-	WinnerID   string
+	ServerTick              uint32
+	Players                 [2]PlayerState
+	Status                  MatchStatus
+	WinnerID                string
+	FinishReason            FinishReason
+	CountdownTicksRemaining uint32
+	MatchTicksRemaining     uint32
 }
 
 type Room struct {
@@ -59,8 +78,10 @@ type Room struct {
 	inputs         [2]Input
 	nextAttackTick [2]uint32
 	tick           uint32
+	activeTicks    uint32
 	status         MatchStatus
 	winnerID       string
+	finishReason   FinishReason
 }
 
 func New(playerA, playerB string) (*Room, error) {
@@ -70,11 +91,10 @@ func New(playerA, playerB string) (*Room, error) {
 
 	return &Room{
 		players: [2]PlayerState{
-			{ID: playerA, HP: InitialHP},
-			{ID: playerB, HP: InitialHP},
+			{ID: playerA, PositionX: PlayerASpawnX, HP: InitialHP},
+			{ID: playerB, PositionX: PlayerBSpawnX, HP: InitialHP},
 		},
-		nextAttackTick: [2]uint32{1, 1},
-		status:         MatchActive,
+		status: MatchCountdown,
 	}, nil
 }
 
@@ -95,26 +115,50 @@ func (r *Room) SubmitInput(playerID string, input Input) error {
 	return nil
 }
 
-// Step advances the simulation by exactly one fixed tick.
+// Step advances the lifecycle and simulation by exactly one fixed tick.
 func (r *Room) Step() Snapshot {
 	if r.status == MatchFinished {
 		return r.Snapshot()
 	}
 
 	r.tick++
+	if r.status == MatchCountdown {
+		if r.tick >= CountdownTicks {
+			r.status = MatchActive
+			// Inputs sent during countdown must never take effect after it ends.
+			for index := range r.inputs {
+				r.inputs[index] = Input{Tick: r.inputs[index].Tick}
+				r.nextAttackTick[index] = r.tick + 1
+			}
+		}
+		return r.Snapshot()
+	}
+
+	r.activeTicks++
 	r.applyMovement()
 	r.applyAttacks()
-	r.finishIfNeeded()
+	r.finishFromKO()
+	if r.status != MatchFinished && r.activeTicks >= MatchDurationTicks {
+		r.finishFromTimeLimit()
+	}
 	return r.Snapshot()
 }
 
 func (r *Room) Snapshot() Snapshot {
-	return Snapshot{
-		ServerTick: r.tick,
-		Players:    r.players,
-		Status:     r.status,
-		WinnerID:   r.winnerID,
+	snapshot := Snapshot{
+		ServerTick:   r.tick,
+		Players:      r.players,
+		Status:       r.status,
+		WinnerID:     r.winnerID,
+		FinishReason: r.finishReason,
 	}
+	if r.status == MatchCountdown && r.tick < CountdownTicks {
+		snapshot.CountdownTicksRemaining = CountdownTicks - r.tick
+	}
+	if r.status == MatchActive && r.activeTicks < MatchDurationTicks {
+		snapshot.MatchTicksRemaining = MatchDurationTicks - r.activeTicks
+	}
+	return snapshot
 }
 
 func (r *Room) applyMovement() {
@@ -159,7 +203,7 @@ func (r *Room) canAttack(playerIndex int) bool {
 	return r.players[playerIndex].HP > 0 && r.inputs[playerIndex].Attack && r.tick >= r.nextAttackTick[playerIndex]
 }
 
-func (r *Room) finishIfNeeded() {
+func (r *Room) finishFromKO() {
 	playerAAlive := r.players[0].HP > 0
 	playerBAlive := r.players[1].HP > 0
 	if playerAAlive && playerBAlive {
@@ -167,10 +211,22 @@ func (r *Room) finishIfNeeded() {
 	}
 
 	r.status = MatchFinished
+	r.finishReason = FinishReasonKO
 	switch {
 	case playerAAlive:
 		r.winnerID = r.players[0].ID
 	case playerBAlive:
+		r.winnerID = r.players[1].ID
+	}
+}
+
+func (r *Room) finishFromTimeLimit() {
+	r.status = MatchFinished
+	r.finishReason = FinishReasonTimeLimit
+	switch {
+	case r.players[0].HP > r.players[1].HP:
+		r.winnerID = r.players[0].ID
+	case r.players[1].HP > r.players[0].HP:
 		r.winnerID = r.players[1].ID
 	}
 }

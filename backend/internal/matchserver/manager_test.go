@@ -9,8 +9,17 @@ import (
 
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/matchticket"
 	gamev1 "github.com/dprishchepa/2d-pvp-duel/backend/internal/proto/game/v1"
+	"github.com/dprishchepa/2d-pvp-duel/backend/internal/room"
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/transport/quicserver"
 )
+
+func TestMatchStatusWireValuesRemainCompatible(t *testing.T) {
+	t.Parallel()
+
+	if gamev1.MatchStatus_MATCH_STATUS_ACTIVE != 0 || gamev1.MatchStatus_MATCH_STATUS_FINISHED != 1 {
+		t.Fatalf("wire values changed: ACTIVE=%d FINISHED=%d", gamev1.MatchStatus_MATCH_STATUS_ACTIVE, gamev1.MatchStatus_MATCH_STATUS_FINISHED)
+	}
+}
 
 func TestMatchManager_RejectsInvalidToken(t *testing.T) {
 	t.Parallel()
@@ -25,7 +34,7 @@ func TestMatchManager_RejectsInvalidToken(t *testing.T) {
 	}
 }
 
-func TestMatchManager_PairsTicketedPlayersInSharedFixedTickRoom(t *testing.T) {
+func TestMatchManager_PairsPlayersWithReliableStartAndSharedCountdown(t *testing.T) {
 	t.Parallel()
 
 	tickets := newTicketManager(t)
@@ -39,28 +48,77 @@ func TestMatchManager_PairsTicketedPlayersInSharedFixedTickRoom(t *testing.T) {
 	t.Cleanup(alice.Close)
 	t.Cleanup(bob.Close)
 
-	if err := alice.SubmitInput(&gamev1.PlayerInput{Tick: 1, MoveX: 1}); err != nil {
-		t.Fatalf("alice SubmitInput() error = %v", err)
-	}
-	if err := bob.SubmitInput(&gamev1.PlayerInput{Tick: 1, MoveX: -1}); err != nil {
-		t.Fatalf("bob SubmitInput() error = %v", err)
+	for _, session := range []quicserver.Session{alice, bob} {
+		start := session.MatchStart()
+		if start.GetTickRate() != 30 || start.GetCountdownTicks() != 90 || start.GetMatchDurationTicks() != 2700 {
+			t.Errorf("start timing = rate %d countdown %d duration %d", start.GetTickRate(), start.GetCountdownTicks(), start.GetMatchDurationTicks())
+		}
+		initial := start.GetInitialSnapshot()
+		if initial.GetStatus() != gamev1.MatchStatus_MATCH_STATUS_COUNTDOWN {
+			t.Errorf("initial status = %v, want countdown", initial.GetStatus())
+		}
+		if playerPositionX(t, initial, "alice") != -playerPositionX(t, initial, "bob") {
+			t.Errorf("initial spawns are not symmetric")
+		}
 	}
 
-	aliceSnapshot := receiveAcknowledgedSnapshot(t, alice, "alice", 1)
-	bobSnapshot := receiveAcknowledgedSnapshot(t, bob, "bob", 1)
-	assertPlayerDirection(t, aliceSnapshot, "alice", 1)
-	assertPlayerDirection(t, aliceSnapshot, "bob", -1)
-	assertPlayerDirection(t, bobSnapshot, "alice", 1)
-	assertPlayerDirection(t, bobSnapshot, "bob", -1)
+	assertNoSnapshot(t, alice)
+	assertNoSnapshot(t, bob)
+	alice.AcknowledgeMatchStart()
+	alice.AcknowledgeMatchStart() // Per-session acknowledgement is idempotent.
+	select {
+	case <-alice.(*playerSession).match.startBarrier:
+		t.Fatal("start barrier opened after only one session acknowledged MatchStart")
+	default:
+	}
+	assertNoSnapshot(t, alice)
+	assertNoSnapshot(t, bob)
+	bob.AcknowledgeMatchStart()
+	select {
+	case <-alice.(*playerSession).match.startBarrier:
+	default:
+		t.Fatal("start barrier remained closed after both sessions acknowledged MatchStart")
+	}
 
-	firstPosition := playerPositionX(t, aliceSnapshot, "alice")
-	second := receiveSnapshot(t, alice)
-	if second.GetServerTick() <= aliceSnapshot.GetServerTick() {
-		t.Errorf("server tick did not advance independently: first=%d second=%d", aliceSnapshot.GetServerTick(), second.GetServerTick())
+	aliceSnapshot := receiveSnapshot(t, alice)
+	bobSnapshot := receiveSnapshot(t, bob)
+	if aliceSnapshot.GetStatus() != gamev1.MatchStatus_MATCH_STATUS_COUNTDOWN || bobSnapshot.GetStatus() != gamev1.MatchStatus_MATCH_STATUS_COUNTDOWN {
+		t.Errorf("paired sessions did not share countdown snapshots")
 	}
-	if got := playerPositionX(t, second, "alice"); got <= firstPosition {
-		t.Errorf("position did not advance without another input: first=%d second=%d", firstPosition, got)
+}
+
+func TestMatchBroadcastPublishesDedicatedTerminalEvent(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	match := &match{ctx: ctx, cancel: cancel, players: make(map[string]*playerSession)}
+	start := &gamev1.MatchStart{}
+	match.players["alice"] = newPlayerSession(match, "alice", start)
+	match.players["bob"] = newPlayerSession(match, "bob", start)
+	snapshots := make(chan room.Snapshot, 1)
+	done := make(chan struct{})
+	go func() {
+		match.broadcast(snapshots)
+		close(done)
+	}()
+	snapshots <- room.Snapshot{
+		Status:       room.MatchFinished,
+		WinnerID:     "alice",
+		FinishReason: room.FinishReasonTimeLimit,
 	}
+	close(snapshots)
+
+	for _, player := range match.players {
+		matchEnd := <-player.MatchEnds()
+		if matchEnd.GetWinnerPlayerId() != "alice" || matchEnd.GetReason() != gamev1.MatchFinishReason_MATCH_FINISH_REASON_TIME_LIMIT {
+			t.Errorf("match end = winner %q reason %v", matchEnd.GetWinnerPlayerId(), matchEnd.GetReason())
+		}
+		if matchEnd.GetFinalSnapshot().GetStatus() != gamev1.MatchStatus_MATCH_STATUS_FINISHED {
+			t.Errorf("final snapshot status = %v", matchEnd.GetFinalSnapshot().GetStatus())
+		}
+	}
+	<-done
 }
 
 func TestMatchManager_RejectsTicketReplay(t *testing.T) {
@@ -201,6 +259,15 @@ func receiveAcknowledgedSnapshot(
 			t.Fatal("timed out waiting for acknowledged snapshot")
 			return nil
 		}
+	}
+}
+
+func assertNoSnapshot(t *testing.T, session quicserver.Session) {
+	t.Helper()
+	select {
+	case snapshot := <-session.Snapshots():
+		t.Fatalf("received snapshot before both MatchStart acknowledgements: %+v", snapshot)
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

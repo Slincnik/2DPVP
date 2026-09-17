@@ -1,0 +1,11 @@
+.git
+.cache
+.deps
+backend/bin
+client/build
+client/build-appimage
+client/cmake-build-*
+client/proto
+backend/internal/proto
+deploy/certs
+dist

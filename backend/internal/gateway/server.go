@@ -220,10 +220,6 @@ func (s *Server) handleQueueLeave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.queue.Leave(playerID); err != nil {
-		if errors.Is(err, matchmaking.ErrAlreadyMatched) {
-			writeError(w, http.StatusConflict, "MATCH_ALREADY_CREATED", "match is already created")
-			return
-		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "internal server error")
 		return
 	}

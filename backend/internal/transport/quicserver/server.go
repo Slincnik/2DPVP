@@ -14,11 +14,17 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const ALPN = "pvp-duel-v1"
+const (
+	ALPN                = "pvp-duel-v1"
+	MatchEndGracePeriod = 2 * time.Second
+)
 
 type Session interface {
 	SubmitInput(input *gamev1.PlayerInput) error
+	MatchStart() *gamev1.MatchStart
+	AcknowledgeMatchStart()
 	Snapshots() <-chan *gamev1.WorldSnapshot
+	MatchEnds() <-chan *gamev1.MatchEnd
 	Close()
 }
 
@@ -27,18 +33,20 @@ type Authenticator interface {
 }
 
 type Server struct {
-	addr          string
-	tlsConfig     *tls.Config
-	authenticator Authenticator
+	addr                string
+	tlsConfig           *tls.Config
+	authenticator       Authenticator
+	matchEndGracePeriod time.Duration
 }
 
 func New(addr string, tlsConfig *tls.Config, authenticator Authenticator) *Server {
 	config := tlsConfig.Clone()
 	config.NextProtos = []string{ALPN}
 	return &Server{
-		addr:          addr,
-		tlsConfig:     config,
-		authenticator: authenticator,
+		addr:                addr,
+		tlsConfig:           config,
+		authenticator:       authenticator,
+		matchEndGracePeriod: MatchEndGracePeriod,
 	}
 }
 
@@ -98,6 +106,15 @@ func (s *Server) handleConnection(ctx context.Context, connection *quic.Conn) {
 	if err := protoframe.Write(stream, ready); err != nil {
 		return
 	}
+	start := &gamev1.ServerEnvelope{
+		Payload: &gamev1.ServerEnvelope_MatchStart{MatchStart: session.MatchStart()},
+	}
+	if err := protoframe.Write(stream, start); err != nil {
+		return
+	}
+	// The room clock is gated until both handlers have successfully written
+	// MatchStart, so neither client loses countdown ticks to transport setup.
+	session.AcknowledgeMatchStart()
 
 	receiveDone := make(chan struct{})
 	go func() {
@@ -105,30 +122,47 @@ func (s *Server) handleConnection(ctx context.Context, connection *quic.Conn) {
 		s.receiveInputs(connection, session)
 	}()
 
+	snapshots := session.Snapshots()
+	matchEnds := session.MatchEnds()
 	for {
 		select {
 		case <-connection.Context().Done():
 			return
 		case <-receiveDone:
 			return
-		case snapshot, open := <-session.Snapshots():
+		case snapshot, open := <-snapshots:
 			if !open {
-				_ = connection.CloseWithError(0, "session ended")
-				return
+				snapshots = nil
+				continue
 			}
 			response, err := proto.Marshal(snapshot)
 			if err != nil {
 				return
 			}
 			_ = connection.SendDatagram(response)
-			if snapshot.GetStatus() == gamev1.MatchStatus_MATCH_STATUS_FINISHED {
-				final := &gamev1.ServerEnvelope{
-					Payload: &gamev1.ServerEnvelope_Snapshot{Snapshot: snapshot},
-				}
-				_ = protoframe.Write(stream, final)
-				_ = connection.CloseWithError(0, "match finished")
+		case matchEnd, open := <-matchEnds:
+			if !open {
 				return
 			}
+			final := &gamev1.ServerEnvelope{
+				Payload: &gamev1.ServerEnvelope_MatchEnd{MatchEnd: matchEnd},
+			}
+			if err := protoframe.Write(stream, final); err != nil {
+				return
+			}
+			// Keep the stream and session alive briefly so the reliable terminal
+			// event can be acknowledged before a graceful server close.
+			timer := time.NewTimer(s.matchEndGracePeriod)
+			select {
+			case <-timer.C:
+			case <-connection.Context().Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return
+			}
+			_ = connection.CloseWithError(0, "match finished")
+			return
 		}
 	}
 }

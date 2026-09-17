@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=2D PvP Duel
+Comment=Realtime 1v1 arena duel
+Exec=pvp-duel-launcher
+Icon=pvp-duel
+Categories=Game;ActionGame;
+Terminal=false

@@ -63,6 +63,31 @@ func TestService_JoinIsIdempotentAndLeaveRemovesPlayer(t *testing.T) {
 	}
 }
 
+func TestService_LeaveClearsCompletedMatchedResultForRequeue(t *testing.T) {
+	t.Parallel()
+
+	service, _ := newTestService(t)
+	if _, err := service.Join("alice"); err != nil {
+		t.Fatalf("Join(alice) error = %v", err)
+	}
+	if _, err := service.Join("bob"); err != nil {
+		t.Fatalf("Join(bob) error = %v", err)
+	}
+	if got := service.PlayerStatus("alice").Status; got != StatusMatched {
+		t.Fatalf("status before leave = %q, want matched", got)
+	}
+	if err := service.Leave("alice"); err != nil {
+		t.Fatalf("Leave(matched) error = %v", err)
+	}
+	result, err := service.Join("alice")
+	if err != nil {
+		t.Fatalf("requeue Join() error = %v", err)
+	}
+	if result.Status != StatusWaiting {
+		t.Errorf("requeue status = %q, want waiting", result.Status)
+	}
+}
+
 func newTestService(t *testing.T) (*Service, *matchticket.Manager) {
 	t.Helper()
 	tickets, err := matchticket.NewManager(

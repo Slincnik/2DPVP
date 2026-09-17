@@ -4,6 +4,10 @@ modules:
 lint:
   use:
     - STANDARD
+  # ACTIVE=0 is an established wire value and cannot be renamed or renumbered.
+  ignore_only:
+    ENUM_ZERO_VALUE_SUFFIX:
+      - proto/game/v1/duel.proto
 breaking:
   use:
     - FILE

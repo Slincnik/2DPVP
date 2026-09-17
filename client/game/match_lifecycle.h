@@ -1,0 +1,26 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+
+#include "game/v1/duel.pb.h"
+
+namespace duel::game {
+
+class MatchmakingCleanup {
+public:
+    void MatchAccepted();
+    void ConnectionFailed();
+    void MatchEnded();
+    void QueueResetSucceeded();
+    [[nodiscard]] bool QueueResetRequired() const;
+
+private:
+    bool queueResetRequired_ = false;
+};
+
+std::uint32_t TicksToDisplaySeconds(std::uint32_t ticks, std::uint32_t tickRate);
+std::string MatchResultLabel(const ::game::v1::MatchEnd& matchEnd, const std::string& playerId);
+std::string MatchFinishReasonLabel(::game::v1::MatchFinishReason reason);
+
+} // namespace duel::game

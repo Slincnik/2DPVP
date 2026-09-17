@@ -135,11 +135,14 @@ func (m *MatchManager) removeWaiting(matchID string, waiting *waitingPlayer) {
 }
 
 type match struct {
-	ctx       context.Context
-	cancel    context.CancelFunc
-	inputs    chan room.QueuedInput
-	players   map[string]*playerSession
-	closeOnce sync.Once
+	ctx          context.Context
+	cancel       context.CancelFunc
+	inputs       chan room.QueuedInput
+	players      map[string]*playerSession
+	startBarrier chan struct{}
+	startMutex   sync.Mutex
+	startCount   int
+	closeOnce    sync.Once
 }
 
 func newMatch(playerA, playerB string) (*match, error) {
@@ -150,18 +153,29 @@ func newMatch(playerA, playerB string) (*match, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &match{
-		ctx:     ctx,
-		cancel:  cancel,
-		inputs:  make(chan room.QueuedInput, room.TickRate*4),
-		players: make(map[string]*playerSession, 2),
+		ctx:          ctx,
+		cancel:       cancel,
+		inputs:       make(chan room.QueuedInput, room.TickRate*4),
+		players:      make(map[string]*playerSession, 2),
+		startBarrier: make(chan struct{}),
 	}
-	m.players[playerA] = newPlayerSession(m, playerA)
-	m.players[playerB] = newPlayerSession(m, playerB)
+	start := &gamev1.MatchStart{
+		InitialSnapshot:    snapshotToProto(duel.Snapshot()),
+		TickRate:           room.TickRate,
+		CountdownTicks:     room.CountdownTicks,
+		MatchDurationTicks: room.MatchDurationTicks,
+	}
+	m.players[playerA] = newPlayerSession(m, playerA, start)
+	m.players[playerB] = newPlayerSession(m, playerB, start)
 
 	roomSnapshots := make(chan room.Snapshot, 1)
 	loop := room.NewLoop(duel, m.inputs, roomSnapshots)
 	go func() {
-		_ = loop.RunRealtime(ctx)
+		select {
+		case <-m.startBarrier:
+			_ = loop.RunRealtime(ctx)
+		case <-ctx.Done():
+		}
 		close(roomSnapshots)
 	}()
 	go m.broadcast(roomSnapshots)
@@ -176,6 +190,7 @@ func (m *match) broadcast(roomSnapshots <-chan room.Snapshot) {
 	defer func() {
 		for _, player := range m.players {
 			close(player.snapshots)
+			close(player.matchEnds)
 		}
 	}()
 
@@ -183,6 +198,18 @@ func (m *match) broadcast(roomSnapshots <-chan room.Snapshot) {
 		converted := snapshotToProto(snapshot)
 		for _, player := range m.players {
 			publishLatest(player.snapshots, converted)
+		}
+		if snapshot.Status == room.MatchFinished {
+			matchEnd := &gamev1.MatchEnd{
+				FinalSnapshot:  converted,
+				WinnerPlayerId: snapshot.WinnerID,
+				Reason:         finishReasonToProto(snapshot.FinishReason),
+			}
+			// Each terminal channel is dedicated and buffered, unlike lossy
+			// snapshots, so MatchEnd cannot be displaced or dropped.
+			for _, player := range m.players {
+				player.matchEnds <- matchEnd
+			}
 		}
 	}
 }
@@ -203,22 +230,36 @@ func publishLatest(channel chan *gamev1.WorldSnapshot, snapshot *gamev1.WorldSna
 	}
 }
 
+func (m *match) acknowledgeStart() {
+	m.startMutex.Lock()
+	defer m.startMutex.Unlock()
+	m.startCount++
+	if m.startCount == len(m.players) {
+		close(m.startBarrier)
+	}
+}
+
 func (m *match) close() {
 	m.closeOnce.Do(m.cancel)
 }
 
 type playerSession struct {
-	match     *match
-	playerID  string
-	snapshots chan *gamev1.WorldSnapshot
-	closeOnce sync.Once
+	match        *match
+	playerID     string
+	matchStart   *gamev1.MatchStart
+	snapshots    chan *gamev1.WorldSnapshot
+	matchEnds    chan *gamev1.MatchEnd
+	startAckOnce sync.Once
+	closeOnce    sync.Once
 }
 
-func newPlayerSession(match *match, playerID string) *playerSession {
+func newPlayerSession(match *match, playerID string, start *gamev1.MatchStart) *playerSession {
 	return &playerSession{
-		match:     match,
-		playerID:  playerID,
-		snapshots: make(chan *gamev1.WorldSnapshot, 1),
+		match:      match,
+		playerID:   playerID,
+		matchStart: start,
+		snapshots:  make(chan *gamev1.WorldSnapshot, 1),
+		matchEnds:  make(chan *gamev1.MatchEnd, 1),
 	}
 }
 
@@ -242,8 +283,20 @@ func (s *playerSession) SubmitInput(input *gamev1.PlayerInput) error {
 	}
 }
 
+func (s *playerSession) MatchStart() *gamev1.MatchStart {
+	return s.matchStart
+}
+
+func (s *playerSession) AcknowledgeMatchStart() {
+	s.startAckOnce.Do(s.match.acknowledgeStart)
+}
+
 func (s *playerSession) Snapshots() <-chan *gamev1.WorldSnapshot {
 	return s.snapshots
+}
+
+func (s *playerSession) MatchEnds() <-chan *gamev1.MatchEnd {
+	return s.matchEnds
 }
 
 func (s *playerSession) Close() {
@@ -263,14 +316,32 @@ func snapshotToProto(snapshot room.Snapshot) *gamev1.WorldSnapshot {
 	}
 
 	status := gamev1.MatchStatus_MATCH_STATUS_ACTIVE
-	if snapshot.Status == room.MatchFinished {
+	switch snapshot.Status {
+	case room.MatchFinished:
 		status = gamev1.MatchStatus_MATCH_STATUS_FINISHED
+	case room.MatchWaiting:
+		status = gamev1.MatchStatus_MATCH_STATUS_WAITING
+	case room.MatchCountdown:
+		status = gamev1.MatchStatus_MATCH_STATUS_COUNTDOWN
 	}
 	return &gamev1.WorldSnapshot{
-		ServerTick:     snapshot.ServerTick,
-		Players:        players,
-		Status:         status,
-		WinnerPlayerId: snapshot.WinnerID,
+		ServerTick:              snapshot.ServerTick,
+		Players:                 players,
+		Status:                  status,
+		WinnerPlayerId:          snapshot.WinnerID,
+		CountdownTicksRemaining: snapshot.CountdownTicksRemaining,
+		MatchTicksRemaining:     snapshot.MatchTicksRemaining,
+	}
+}
+
+func finishReasonToProto(reason room.FinishReason) gamev1.MatchFinishReason {
+	switch reason {
+	case room.FinishReasonKO:
+		return gamev1.MatchFinishReason_MATCH_FINISH_REASON_KO
+	case room.FinishReasonTimeLimit:
+		return gamev1.MatchFinishReason_MATCH_FINISH_REASON_TIME_LIMIT
+	default:
+		return gamev1.MatchFinishReason_MATCH_FINISH_REASON_UNSPECIFIED
 	}
 }
 

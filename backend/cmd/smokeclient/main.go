@@ -134,8 +134,16 @@ func play(ctx context.Context, playerID, ticket string, moveX int32) (*gamev1.Wo
 	if readyResponse.GetReady() == nil || !readyResponse.GetReady().GetDatagramsEnabled() {
 		return nil, fmt.Errorf("server did not enable datagrams")
 	}
+	var startResponse gamev1.ServerEnvelope
+	if err := protoframe.Read(stream, &startResponse); err != nil {
+		return nil, fmt.Errorf("receive match start: %w", err)
+	}
+	if startResponse.GetMatchStart() == nil {
+		return nil, fmt.Errorf("server did not send match start")
+	}
 
-	inputPayload, err := proto.Marshal(&gamev1.PlayerInput{Tick: 1, MoveX: moveX})
+	inputTick := uint32(1)
+	inputPayload, err := proto.Marshal(&gamev1.PlayerInput{Tick: inputTick, MoveX: moveX})
 	if err != nil {
 		return nil, fmt.Errorf("marshal input: %w", err)
 	}
@@ -153,8 +161,16 @@ func play(ctx context.Context, playerID, ticket string, moveX int32) (*gamev1.Wo
 			return nil, fmt.Errorf("decode snapshot datagram: %w", err)
 		}
 		player := findPlayer(&snapshot, playerID)
-		if player != nil && player.GetLastAckedInputTick() >= 1 {
+		if player != nil && player.GetLastAckedInputTick() >= inputTick {
 			return &snapshot, nil
+		}
+		inputTick++
+		inputPayload, err = proto.Marshal(&gamev1.PlayerInput{Tick: inputTick, MoveX: moveX})
+		if err != nil {
+			return nil, fmt.Errorf("marshal input: %w", err)
+		}
+		if err := connection.SendDatagram(inputPayload); err != nil {
+			return nil, fmt.Errorf("send input datagram: %w", err)
 		}
 	}
 }

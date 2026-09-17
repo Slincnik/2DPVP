@@ -1,5 +1,6 @@
 #include "api/gateway_client.h"
 #include "game/interpolation.h"
+#include "game/match_lifecycle.h"
 #include "game/prediction.h"
 #include "net/quic_client.h"
 
@@ -33,6 +34,7 @@ enum class Screen {
     Waiting,
     ConnectPending,
     Playing,
+    Result,
     Error,
 };
 
@@ -159,10 +161,14 @@ int main() {
     std::string message = "Login or create an account";
     bool loginActive = true;
     bool passwordActive = false;
-    bool receivedSnapshot = false;
+    bool matchStarted = false;
+    bool queueRequestReset = false;
+    duel::game::MatchmakingCleanup matchmakingCleanup;
+    std::uint32_t serverTickRate = 30;
     auto nextPoll = std::chrono::steady_clock::now();
 
     ::game::v1::WorldSnapshot world;
+    ::game::v1::MatchEnd matchEnd;
     duel::game::Prediction prediction;
     duel::game::InterpolationBuffer opponentInterpolation;
     std::uint32_t inputTick = 0;
@@ -186,7 +192,20 @@ int main() {
 
     auto beginQueueRequest = [&](bool join) {
         const auto accessToken = session.accessToken;
-        queueFuture = std::async(std::launch::async, [&, join, accessToken] {
+        const bool resetCompletedMatch = join && matchmakingCleanup.QueueResetRequired();
+        queueRequestReset = resetCompletedMatch;
+        if (join) {
+            // Dispose callbacks and transport state from the previous attempt
+            // before its queue entry is removed and a new ticket is requested.
+            network.reset();
+        }
+        queueFuture = std::async(std::launch::async, [&, join, resetCompletedMatch, accessToken] {
+            if (resetCompletedMatch) {
+                const auto left = gateway.LeaveQueue(accessToken);
+                if (!left) {
+                    return QueueResult{.error = left.error};
+                }
+            }
             return join ? gateway.JoinQueue(accessToken) : gateway.QueueStatusFor(accessToken);
         });
         screen = Screen::QueuePending;
@@ -211,6 +230,9 @@ int main() {
             return;
         }
 
+        // From this point every exit path must clear the matched Gateway entry
+        // before another join, including malformed endpoints and QUIC failures.
+        matchmakingCleanup.MatchAccepted();
         const auto endpoint = ParseEndpoint(result.value.serverAddr);
         if (!endpoint) {
             message = "Gateway returned an invalid match server address";
@@ -243,7 +265,12 @@ int main() {
             }
         }
         if (screen == Screen::QueuePending && FutureReady(queueFuture)) {
-            handleQueueResult(queueFuture.get());
+            auto result = queueFuture.get();
+            if (queueRequestReset && result) {
+                matchmakingCleanup.QueueResetSucceeded();
+            }
+            queueRequestReset = false;
+            handleQueueResult(std::move(result));
         }
         if (screen == Screen::Waiting && std::chrono::steady_clock::now() >= nextPoll) {
             beginQueueRequest(false);
@@ -255,31 +282,26 @@ int main() {
                 opponentInterpolation = duel::game::InterpolationBuffer{};
                 inputTick = 0;
                 accumulator = 0.0F;
-                receivedSnapshot = false;
-                message = "QUIC connected";
+                matchStarted = false;
+                matchEnd.Clear();
+                serverTickRate = 30;
+                message = "Waiting for match start...";
                 screen = Screen::Playing;
             } else {
+                matchmakingCleanup.ConnectionFailed();
                 message = "Match connection failed: " + network->Error();
                 screen = Screen::Error;
             }
         }
 
         if (screen == Screen::Playing) {
-            accumulator = std::min(accumulator + frameTime, 0.25F);
-            while (accumulator >= kSimulationStep) {
-                accumulator -= kSimulationStep;
-                if (network && network->IsConnected()) {
-                    const std::int32_t moveX = static_cast<std::int32_t>(IsKeyDown(KEY_D))
-                        - static_cast<std::int32_t>(IsKeyDown(KEY_A));
-                    const std::int32_t moveY = static_cast<std::int32_t>(IsKeyDown(KEY_S))
-                        - static_cast<std::int32_t>(IsKeyDown(KEY_W));
-                    ++inputTick;
-                    prediction.ApplyInput(inputTick, moveX, moveY);
-                    network->SendInput(inputTick, moveX, moveY, IsKeyDown(KEY_SPACE));
-                }
-            }
-
             if (network) {
+                if (auto start = network->PollMatchStart()) {
+                    matchStarted = true;
+                    serverTickRate = start->tick_rate();
+                    world = start->initial_snapshot();
+                    message = "Match starting";
+                }
                 if (auto snapshot = network->PollSnapshot()) {
                     world = std::move(*snapshot);
                     for (const auto& player : world.players()) {
@@ -290,12 +312,32 @@ int main() {
                                 world.server_tick(), player.position_x(), player.position_y());
                         }
                     }
-                    message = "Server tick " + std::to_string(world.server_tick());
-                    receivedSnapshot = true;
-                } else if (!network->IsConnected() && receivedSnapshot
-                    && world.status() != ::game::v1::MATCH_STATUS_FINISHED) {
+                }
+                if (auto end = network->PollMatchEnd()) {
+                    matchEnd = std::move(*end);
+                    world = matchEnd.final_snapshot();
+                    matchmakingCleanup.MatchEnded();
+                    screen = Screen::Result;
+                    message = duel::game::MatchFinishReasonLabel(matchEnd.reason());
+                } else if (!network->IsConnected()) {
+                    matchmakingCleanup.ConnectionFailed();
                     message = "Network error: " + network->Error();
                     screen = Screen::Error;
+                }
+            }
+
+            accumulator = std::min(accumulator + frameTime, 0.25F);
+            while (screen == Screen::Playing && accumulator >= kSimulationStep) {
+                accumulator -= kSimulationStep;
+                if (network && network->IsConnected() && matchStarted
+                    && world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
+                    const std::int32_t moveX = static_cast<std::int32_t>(IsKeyDown(KEY_D))
+                        - static_cast<std::int32_t>(IsKeyDown(KEY_A));
+                    const std::int32_t moveY = static_cast<std::int32_t>(IsKeyDown(KEY_S))
+                        - static_cast<std::int32_t>(IsKeyDown(KEY_W));
+                    ++inputTick;
+                    prediction.ApplyInput(inputTick, moveX, moveY);
+                    network->SendInput(inputTick, moveX, moveY, IsKeyDown(KEY_SPACE));
                 }
             }
             prediction.AdvanceVisual(std::min(frameTime * 12.0F, 1.0F));
@@ -321,25 +363,48 @@ int main() {
         } else if (screen == Screen::Playing) {
             DrawRectangleLines(290, 150, 700, 420, GRAY);
             DrawText("WASD: move | SPACE: attack", 24, 20, 20, LIGHTGRAY);
-            DrawText(message.c_str(), 24, 50, 18, GREEN);
+            std::string clockText = "Waiting for match start";
+            if (world.status() == ::game::v1::MATCH_STATUS_COUNTDOWN) {
+                clockText = "Starts in " + std::to_string(duel::game::TicksToDisplaySeconds(
+                    world.countdown_ticks_remaining(), serverTickRate));
+            } else if (world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
+                clockText = "Time: " + std::to_string(duel::game::TicksToDisplaySeconds(
+                    world.match_ticks_remaining(), serverTickRate));
+            }
+            DrawText(clockText.c_str(), 560, 90, 28, GOLD);
             for (int index = 0; index < world.players_size(); ++index) {
                 auto player = world.players(index);
-                if (player.player_id() == session.userId) {
+                const bool isLocal = player.player_id() == session.userId;
+                const std::string hp = std::string(isLocal ? "Your HP: " : "Opponent HP: ")
+                    + std::to_string(player.hp());
+                DrawText(hp.c_str(), isLocal ? 24 : 1060, 50, 18, isLocal ? SKYBLUE : RED);
+                if (isLocal && world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
                     const auto visual = prediction.VisualPosition();
                     player.set_position_x(visual.x);
                     player.set_position_y(visual.y);
-                } else {
+                } else if (!isLocal && world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
                     const auto interpolated = opponentInterpolation.Sample();
                     player.set_position_x(static_cast<std::int32_t>(std::lround(interpolated.x)));
                     player.set_position_y(static_cast<std::int32_t>(std::lround(interpolated.y)));
                 }
-                DrawPlayer(player, player.player_id() == session.userId ? SKYBLUE : RED);
+                DrawPlayer(player, isLocal ? SKYBLUE : RED);
             }
-            if (world.status() == ::game::v1::MATCH_STATUS_FINISHED) {
-                const std::string result = world.winner_player_id().empty()
-                    ? "DRAW"
-                    : world.winner_player_id() == session.userId ? "YOU WIN" : "YOU LOSE";
-                DrawText(result.c_str(), 520, 90, 36, GOLD);
+        } else if (screen == Screen::Result) {
+            const std::string result = duel::game::MatchResultLabel(matchEnd, session.userId);
+            DrawText(result.c_str(), 540, 150, 40, GOLD);
+            DrawText(message.c_str(), 560, 210, 24, LIGHTGRAY);
+            for (int index = 0; index < world.players_size(); ++index) {
+                const auto& player = world.players(index);
+                const std::string hp = player.player_id() + ": " + std::to_string(player.hp()) + " HP";
+                DrawText(hp.c_str(), 520, 260 + 32 * index, 20,
+                    player.player_id() == session.userId ? SKYBLUE : RED);
+            }
+            if (Button(Rectangle{390, 370, 240, 52}, "Back to menu")) {
+                screen = Screen::Ready;
+                message = "Ready to find a match";
+            }
+            if (Button(Rectangle{650, 370, 240, 52}, "Find another")) {
+                beginQueueRequest(true);
             }
         } else {
             DrawText("2D PvP Duel", 500, 120, 36, RAYWHITE);

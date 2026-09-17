@@ -2,7 +2,7 @@ DATABASE_URL ?= postgres://pvp_duel:local_only_password@localhost:5432/pvp_duel?
 JWT_SECRET ?= local-development-jwt-secret-change-me-123
 MATCH_TICKET_SECRET ?= local-match-ticket-secret-change-me-123
 
-.PHONY: backend-build backend-test gateway matchserver smoke-quic proto client client-test setup-msquic dev-cert db-up db-down db-reset
+.PHONY: backend-build backend-test gateway matchserver smoke-quic proto client client-test appimage appimage-native setup-msquic dev-cert db-up db-down db-reset
 
 backend-build:
 	cd backend && go build ./...
@@ -31,6 +31,12 @@ client:
 
 client-test: client
 	ctest --test-dir client/build --output-on-failure
+
+appimage:
+	GATEWAY_URL='$(GATEWAY_URL)' ./scripts/package-appimage-compatible.sh
+
+appimage-native:
+	GATEWAY_URL='$(GATEWAY_URL)' ./scripts/package-appimage.sh
 
 setup-msquic:
 	./scripts/setup-msquic.sh

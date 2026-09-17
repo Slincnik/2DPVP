@@ -148,6 +148,16 @@ public:
         return SendDatagram(input);
     }
 
+    std::optional<::game::v1::MatchStart> PollMatchStart() {
+        std::scoped_lock lock(mutex_);
+        if (!matchStart_) {
+            return std::nullopt;
+        }
+        auto start = std::move(matchStart_);
+        matchStart_.reset();
+        return start;
+    }
+
     std::optional<::game::v1::WorldSnapshot> PollSnapshot() {
         std::scoped_lock lock(mutex_);
         if (snapshots_.empty()) {
@@ -156,6 +166,16 @@ public:
         auto snapshot = std::move(snapshots_.back());
         snapshots_.clear();
         return snapshot;
+    }
+
+    std::optional<::game::v1::MatchEnd> PollMatchEnd() {
+        std::scoped_lock lock(mutex_);
+        if (!matchEnd_) {
+            return std::nullopt;
+        }
+        auto end = std::move(matchEnd_);
+        matchEnd_.reset();
+        return end;
     }
 
     std::string Error() const {
@@ -193,10 +213,10 @@ private:
             }
             break;
         case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_TRANSPORT:
-            SetError("QUIC transport closed the connection");
+            ServerClosed("QUIC transport closed the connection");
             break;
         case QUIC_CONNECTION_EVENT_SHUTDOWN_INITIATED_BY_PEER:
-            SetError("match server closed the connection");
+            ServerClosed("match server closed the connection");
             break;
         case QUIC_CONNECTION_EVENT_DATAGRAM_STATE_CHANGED: {
             std::scoped_lock lock(mutex_);
@@ -235,7 +255,7 @@ private:
             break;
         case QUIC_STREAM_EVENT_PEER_SEND_ABORTED:
         case QUIC_STREAM_EVENT_PEER_SEND_SHUTDOWN:
-            SetError("match server closed the stream");
+            ServerClosed("match server closed the stream");
             break;
         case QUIC_STREAM_EVENT_SHUTDOWN_COMPLETE: {
             std::scoped_lock lock(mutex_);
@@ -362,8 +382,15 @@ private:
                 authenticated_ = envelope.ready().datagrams_enabled();
                 UpdateConnected();
             }
+            if (envelope.has_match_start()) {
+                matchStart_ = envelope.match_start();
+            }
             if (envelope.has_snapshot()) {
                 snapshots_.push_back(envelope.snapshot());
+            }
+            if (envelope.has_match_end()) {
+                matchEnd_ = envelope.match_end();
+                matchEnded_ = true;
             }
         }
     }
@@ -382,6 +409,18 @@ private:
 
     void UpdateConnected() {
         connected_ = authenticated_ && datagramSendEnabled_ && !failed_;
+        condition_.notify_all();
+    }
+
+    void ServerClosed(std::string message) {
+        std::scoped_lock lock(mutex_);
+        connected_ = false;
+        if (!matchEnded_) {
+            if (error_.empty()) {
+                error_ = std::move(message);
+            }
+            failed_ = true;
+        }
         condition_.notify_all();
     }
 
@@ -437,13 +476,16 @@ private:
     bool authenticated_ = false;
     bool datagramSendEnabled_ = false;
     bool failed_ = false;
+    bool matchEnded_ = false;
     bool shutdownComplete_ = false;
     bool streamShutdownComplete_ = false;
     std::string error_;
     std::string matchToken_;
     std::string playerId_;
     std::vector<std::uint8_t> receiveBuffer_;
+    std::optional<::game::v1::MatchStart> matchStart_;
     std::deque<::game::v1::WorldSnapshot> snapshots_;
+    std::optional<::game::v1::MatchEnd> matchEnd_;
 };
 
 QuicClient::QuicClient() : impl_(std::make_unique<Impl>()) {}
@@ -467,8 +509,16 @@ bool QuicClient::SendInput(
     return impl_->SendInput(tick, moveX, moveY, attack);
 }
 
+std::optional<::game::v1::MatchStart> QuicClient::PollMatchStart() {
+    return impl_->PollMatchStart();
+}
+
 std::optional<::game::v1::WorldSnapshot> QuicClient::PollSnapshot() {
     return impl_->PollSnapshot();
+}
+
+std::optional<::game::v1::MatchEnd> QuicClient::PollMatchEnd() {
+    return impl_->PollMatchEnd();
 }
 
 std::string QuicClient::Error() const { return impl_->Error(); }

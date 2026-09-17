@@ -50,6 +50,32 @@ Gateway URL можно переопределить через `GATEWAY_URL`. У
 `WASD`, атака — `Space`. Подробности: [`docs/client-flow.md`](docs/client-flow.md).
 Зависимости MsQuic хранятся в `.deps/` и не попадают в Git.
 
+### Переносимый Linux-клиент (AppImage)
+
+Собрать x86_64 AppImage с адресом Gateway по умолчанию:
+
+```bash
+make setup-msquic  # если ещё не запускался
+GATEWAY_URL=http://192.168.1.10:8080 make appimage
+```
+
+Готовый файл появится в `dist/PvPDuel-x86_64.AppImage`. Его можно передать
+пользователю и запустить без установки MsQuic/protobuf:
+
+```bash
+chmod +x PvPDuel-x86_64.AppImage
+./PvPDuel-x86_64.AppImage
+```
+
+Адрес сервера при необходимости переопределяется при запуске через
+`GATEWAY_URL`. Основная цель собирает клиент в контейнере Ubuntu 22.04, скачивает закреплённую
+версию `linuxdeploy`, проверяет её SHA-256 и упаковывает динамические
+зависимости. Поэтому AppImage совместим с glibc 2.35 и запускается на Ubuntu
+22.04 и более новых версиях. Для быстрой сборки непосредственно на текущей
+системе существует `make appimage-native`, но такой артефакт может требовать
+более новую glibc. Если в системе недоступен FUSE, AppImage можно запустить с
+`--appimage-extract-and-run`.
+
 Локальный `make gateway` использует development-значения `DATABASE_URL` и
 `JWT_SECRET` из Makefile; в deployment их обязательно нужно переопределить.
 Описание endpoints и модели безопасности: [`docs/auth.md`](docs/auth.md) и

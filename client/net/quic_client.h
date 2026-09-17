@@ -24,7 +24,9 @@ public:
         const std::string& playerId
     );
     bool SendInput(std::uint32_t tick, std::int32_t moveX, std::int32_t moveY, bool attack);
+    std::optional<::game::v1::MatchStart> PollMatchStart();
     std::optional<::game::v1::WorldSnapshot> PollSnapshot();
+    std::optional<::game::v1::MatchEnd> PollMatchEnd();
     std::string Error() const;
     bool IsConnected() const;
 
