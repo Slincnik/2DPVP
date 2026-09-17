@@ -34,6 +34,8 @@ std::string MatchFinishReasonLabel(::game::v1::MatchFinishReason reason) {
         return "Knockout";
     case ::game::v1::MATCH_FINISH_REASON_TIME_LIMIT:
         return "Time limit";
+    case ::game::v1::MATCH_FINISH_REASON_DISCONNECT:
+        return "Opponent disconnected";
     default:
         return "Match finished";
     }

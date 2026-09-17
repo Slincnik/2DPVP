@@ -12,6 +12,7 @@ import (
 	gamev1 "github.com/dprishchepa/2d-pvp-duel/backend/internal/proto/game/v1"
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/room"
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/transport/quicserver"
+	"google.golang.org/protobuf/proto"
 )
 
 var (
@@ -112,8 +113,7 @@ func (m *MatchManager) Authenticate(
 	case waiting.result <- matchResult{session: firstSession}:
 		return secondSession, nil
 	case <-waiting.canceled:
-		firstSession.Close()
-		secondSession.Close()
+		match.abort()
 		return nil, context.Canceled
 	}
 }
@@ -142,7 +142,11 @@ type match struct {
 	startBarrier chan struct{}
 	startMutex   sync.Mutex
 	startCount   int
-	closeOnce    sync.Once
+
+	snapshotMutex sync.Mutex
+	lastSnapshot  *gamev1.WorldSnapshot
+	finishOnce    sync.Once
+	cancelOnce    sync.Once
 }
 
 func newMatch(playerA, playerB string) (*match, error) {
@@ -152,15 +156,17 @@ func newMatch(playerA, playerB string) (*match, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	initialSnapshot := snapshotToProto(duel.Snapshot())
 	m := &match{
 		ctx:          ctx,
 		cancel:       cancel,
 		inputs:       make(chan room.QueuedInput, room.TickRate*4),
 		players:      make(map[string]*playerSession, 2),
 		startBarrier: make(chan struct{}),
+		lastSnapshot: proto.Clone(initialSnapshot).(*gamev1.WorldSnapshot),
 	}
 	start := &gamev1.MatchStart{
-		InitialSnapshot:    snapshotToProto(duel.Snapshot()),
+		InitialSnapshot:    initialSnapshot,
 		TickRate:           room.TickRate,
 		CountdownTicks:     room.CountdownTicks,
 		MatchDurationTicks: room.MatchDurationTicks,
@@ -196,20 +202,16 @@ func (m *match) broadcast(roomSnapshots <-chan room.Snapshot) {
 
 	for snapshot := range roomSnapshots {
 		converted := snapshotToProto(snapshot)
+		m.updateLastSnapshot(converted)
 		for _, player := range m.players {
 			publishLatest(player.snapshots, converted)
 		}
 		if snapshot.Status == room.MatchFinished {
-			matchEnd := &gamev1.MatchEnd{
+			m.publishMatchEnd(&gamev1.MatchEnd{
 				FinalSnapshot:  converted,
 				WinnerPlayerId: snapshot.WinnerID,
 				Reason:         finishReasonToProto(snapshot.FinishReason),
-			}
-			// Each terminal channel is dedicated and buffered, unlike lossy
-			// snapshots, so MatchEnd cannot be displaced or dropped.
-			for _, player := range m.players {
-				player.matchEnds <- matchEnd
-			}
+			})
 		}
 	}
 }
@@ -239,8 +241,52 @@ func (m *match) acknowledgeStart() {
 	}
 }
 
-func (m *match) close() {
-	m.closeOnce.Do(m.cancel)
+func (m *match) updateLastSnapshot(snapshot *gamev1.WorldSnapshot) {
+	m.snapshotMutex.Lock()
+	defer m.snapshotMutex.Unlock()
+	m.lastSnapshot = proto.Clone(snapshot).(*gamev1.WorldSnapshot)
+}
+
+func (m *match) lastSnapshotClone() *gamev1.WorldSnapshot {
+	m.snapshotMutex.Lock()
+	defer m.snapshotMutex.Unlock()
+	return proto.Clone(m.lastSnapshot).(*gamev1.WorldSnapshot)
+}
+
+func (m *match) publishMatchEnd(matchEnd *gamev1.MatchEnd) {
+	m.finishOnce.Do(func() {
+		for _, player := range m.players {
+			player.matchEnds <- proto.Clone(matchEnd).(*gamev1.MatchEnd)
+		}
+	})
+}
+
+func (m *match) playerDisconnected(playerID string) {
+	winnerID := m.opponentID(playerID)
+	finalSnapshot := m.lastSnapshotClone()
+	finalSnapshot.Status = gamev1.MatchStatus_MATCH_STATUS_FINISHED
+	finalSnapshot.WinnerPlayerId = winnerID
+	finalSnapshot.CountdownTicksRemaining = 0
+	finalSnapshot.MatchTicksRemaining = 0
+	m.publishMatchEnd(&gamev1.MatchEnd{
+		FinalSnapshot:  finalSnapshot,
+		WinnerPlayerId: winnerID,
+		Reason:         gamev1.MatchFinishReason_MATCH_FINISH_REASON_DISCONNECT,
+	})
+	m.abort()
+}
+
+func (m *match) opponentID(playerID string) string {
+	for candidate := range m.players {
+		if candidate != playerID {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func (m *match) abort() {
+	m.cancelOnce.Do(m.cancel)
 }
 
 type playerSession struct {
@@ -277,7 +323,9 @@ func (s *playerSession) SubmitInput(input *gamev1.PlayerInput) error {
 	case s.match.inputs <- queued:
 		return nil
 	case <-s.match.ctx.Done():
-		return context.Canceled
+		// A terminal event may already be waiting on the reliable stream. Keep the
+		// connection handler alive so MatchEnd wins over a concurrent input reader.
+		return nil
 	default:
 		return nil
 	}
@@ -300,7 +348,7 @@ func (s *playerSession) MatchEnds() <-chan *gamev1.MatchEnd {
 }
 
 func (s *playerSession) Close() {
-	s.closeOnce.Do(s.match.close)
+	s.closeOnce.Do(func() { s.match.playerDisconnected(s.playerID) })
 }
 
 func snapshotToProto(snapshot room.Snapshot) *gamev1.WorldSnapshot {

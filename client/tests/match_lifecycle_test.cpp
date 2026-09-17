@@ -26,5 +26,6 @@ int main() {
     assert(duel::game::MatchResultLabel(end, "bob") == "YOU LOSE");
     assert(duel::game::MatchFinishReasonLabel(::game::v1::MATCH_FINISH_REASON_KO) == "Knockout");
     assert(duel::game::MatchFinishReasonLabel(::game::v1::MATCH_FINISH_REASON_TIME_LIMIT) == "Time limit");
+    assert(duel::game::MatchFinishReasonLabel(::game::v1::MATCH_FINISH_REASON_DISCONNECT) == "Opponent disconnected");
     return 0;
 }

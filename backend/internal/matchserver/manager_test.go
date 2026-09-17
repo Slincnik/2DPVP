@@ -121,6 +121,37 @@ func TestMatchBroadcastPublishesDedicatedTerminalEvent(t *testing.T) {
 	<-done
 }
 
+func TestMatchDisconnectPublishesTechnicalDefeatAndStopsRoom(t *testing.T) {
+	t.Parallel()
+
+	match, err := newMatch("alice", "bob")
+	if err != nil {
+		t.Fatalf("newMatch() error = %v", err)
+	}
+	alice := match.players["alice"]
+	bob := match.players["bob"]
+
+	bob.Close()
+
+	select {
+	case matchEnd := <-alice.MatchEnds():
+		if matchEnd.GetWinnerPlayerId() != "alice" || matchEnd.GetReason() != gamev1.MatchFinishReason_MATCH_FINISH_REASON_DISCONNECT {
+			t.Fatalf("match end = winner %q reason %v, want alice disconnect", matchEnd.GetWinnerPlayerId(), matchEnd.GetReason())
+		}
+		if matchEnd.GetFinalSnapshot().GetStatus() != gamev1.MatchStatus_MATCH_STATUS_FINISHED {
+			t.Errorf("final status = %v, want finished", matchEnd.GetFinalSnapshot().GetStatus())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for disconnect MatchEnd")
+	}
+
+	select {
+	case <-match.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("match room was not canceled after disconnect")
+	}
+}
+
 func TestMatchManager_RejectsTicketReplay(t *testing.T) {
 	t.Parallel()
 
