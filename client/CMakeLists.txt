@@ -56,10 +56,17 @@ if(APPLE)
             OUTPUT_STRIP_TRAILING_WHITESPACE
             ERROR_QUIET
         )
+        execute_process(
+            COMMAND "${BREW_EXECUTABLE}" --prefix abseil
+            OUTPUT_VARIABLE ABSEIL_BREW_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
         list(APPEND CMAKE_PREFIX_PATH
             "${BREW_PREFIX}"
             "${MSQUIC_BREW_PREFIX}"
             "${PROTOBUF_BREW_PREFIX}"
+            "${ABSEIL_BREW_PREFIX}"
         )
     endif()
     find_path(MSQUIC_INCLUDE_DIR msquic.h
@@ -92,10 +99,20 @@ endif()
 get_filename_component(MSQUIC_LIBRARY_DIR "${MSQUIC_LIBRARY}" DIRECTORY)
 
 find_package(Protobuf REQUIRED)
+if(APPLE)
+    # New Homebrew Protobuf releases emit inline ABSL_DCHECK helpers. The
+    # protobuf target does not expose this dependency reliably in all formula
+    # revisions, so link the implementation explicitly.
+    find_package(absl CONFIG REQUIRED)
+    if(NOT TARGET absl::log_internal_check_op)
+        message(FATAL_ERROR "Homebrew Abseil target absl::log_internal_check_op is missing")
+    endif()
+    set(PROTOBUF_PLATFORM_LIBS absl::log_internal_check_op)
+endif()
 
 add_library(duel_protocol STATIC proto/game/v1/duel.pb.cc)
 target_include_directories(duel_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/proto")
-target_link_libraries(duel_protocol PUBLIC protobuf::libprotobuf)
+target_link_libraries(duel_protocol PUBLIC protobuf::libprotobuf ${PROTOBUF_PLATFORM_LIBS})
 
 add_library(duel_game STATIC game/prediction.cpp game/interpolation.cpp game/match_lifecycle.cpp)
 target_include_directories(duel_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")

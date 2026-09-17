@@ -57,7 +57,7 @@ Command Line Tools и Homebrew, затем из корня проекта вып
 
 ```bash
 xcode-select --install  # если ещё не установлен
-brew install buf cmake protobuf libmsquic
+brew install buf cmake protobuf abseil libmsquic
 make client-macos
 ```
 

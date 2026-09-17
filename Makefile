@@ -33,7 +33,7 @@ client-test: client
 	ctest --test-dir client/build --output-on-failure
 
 client-macos:
-	brew install buf cmake protobuf libmsquic
+	brew install buf cmake protobuf abseil libmsquic
 	make proto
 	cmake -S client -B client/build-macos -DCMAKE_BUILD_TYPE=Release
 	cmake --build client/build-macos --target pvp_duel_client --parallel
