@@ -4,6 +4,12 @@ ROOT_DIR := $(abspath .)
 CLIENT_BUILD_DIR ?= $(ROOT_DIR)/client/build
 MSQUIC_VERSION ?= 2.5.7
 
+# Prefer the Compose CLI plugin, but support the standalone command as well.
+COMPOSE ?= $(shell \
+	if docker compose version >/dev/null 2>&1; then printf 'docker compose'; \
+	elif command -v docker-compose >/dev/null 2>&1; then printf 'docker-compose'; \
+	fi)
+
 DATABASE_URL ?= postgres://pvp_duel:local_only_password@localhost:5432/pvp_duel?sslmode=disable
 JWT_SECRET ?= local-development-jwt-secret-change-me-123
 MATCH_TICKET_SECRET ?= local-match-ticket-secret-change-me-123
@@ -90,14 +96,14 @@ appimage-native: setup-msquic
 	GATEWAY_URL='$(GATEWAY_URL)' ./scripts/package-appimage.sh
 
 db-up:
-	docker compose -p pvp-duel -f deploy/docker-compose.yml up -d postgres
+	$(COMPOSE) -p pvp-duel -f deploy/docker-compose.yml up -d postgres
 
 db-down:
-	docker compose -p pvp-duel -f deploy/docker-compose.yml down
+	$(COMPOSE) -p pvp-duel -f deploy/docker-compose.yml down
 
 db-reset:
-	docker compose -p pvp-duel -f deploy/docker-compose.yml down -v
-	docker compose -p pvp-duel -f deploy/docker-compose.yml up -d postgres
+	$(COMPOSE) -p pvp-duel -f deploy/docker-compose.yml down -v
+	$(COMPOSE) -p pvp-duel -f deploy/docker-compose.yml up -d postgres
 
 dev-cert:
 	mkdir -p deploy/certs
