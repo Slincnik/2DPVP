@@ -33,14 +33,46 @@ FetchContent_Declare(
 set(HTTPLIB_REQUIRE_OPENSSL ON CACHE BOOL "Require HTTPS support" FORCE)
 FetchContent_MakeAvailable(raylib httplib nlohmann_json)
 
-find_package(Protobuf REQUIRED)
-
 if(APPLE)
+    # Homebrew uses /opt/homebrew on Apple Silicon and /usr/local on Intel.
+    # Add formula prefixes explicitly so CMake also finds Protobuf/OpenSSL.
+    find_program(BREW_EXECUTABLE brew)
+    if(BREW_EXECUTABLE)
+        execute_process(
+            COMMAND "${BREW_EXECUTABLE}" --prefix
+            OUTPUT_VARIABLE BREW_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        execute_process(
+            COMMAND "${BREW_EXECUTABLE}" --prefix libmsquic
+            OUTPUT_VARIABLE MSQUIC_BREW_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        execute_process(
+            COMMAND "${BREW_EXECUTABLE}" --prefix protobuf
+            OUTPUT_VARIABLE PROTOBUF_BREW_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        list(APPEND CMAKE_PREFIX_PATH
+            "${BREW_PREFIX}"
+            "${MSQUIC_BREW_PREFIX}"
+            "${PROTOBUF_BREW_PREFIX}"
+        )
+    endif()
     find_path(MSQUIC_INCLUDE_DIR msquic.h
-        HINTS /opt/homebrew/include /usr/local/include
+        HINTS
+            "${MSQUIC_BREW_PREFIX}/include"
+            /opt/homebrew/include
+            /usr/local/include
     )
     find_library(MSQUIC_LIBRARY NAMES msquic
-        HINTS /opt/homebrew/lib /usr/local/lib
+        HINTS
+            "${MSQUIC_BREW_PREFIX}/lib"
+            /opt/homebrew/lib
+            /usr/local/lib
     )
     if(NOT MSQUIC_INCLUDE_DIR OR NOT MSQUIC_LIBRARY)
         message(FATAL_ERROR "MsQuic is missing. Run `brew install libmsquic`.")
@@ -58,6 +90,8 @@ else()
     list(GET MSQUIC_LIBRARIES 0 MSQUIC_LIBRARY)
 endif()
 get_filename_component(MSQUIC_LIBRARY_DIR "${MSQUIC_LIBRARY}" DIRECTORY)
+
+find_package(Protobuf REQUIRED)
 
 add_library(duel_protocol STATIC proto/game/v1/duel.pb.cc)
 target_include_directories(duel_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/proto")

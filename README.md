@@ -50,6 +50,28 @@ Gateway URL можно переопределить через `GATEWAY_URL`. У
 `WASD`, атака — `Space`. Подробности: [`docs/client-flow.md`](docs/client-flow.md).
 Зависимости MsQuic хранятся в `.deps/` и не попадают в Git.
 
+### Сборка клиента на macOS / Apple Silicon
+
+На Mac с M1/M2/M3 нужен нативный ARM64 build toolchain. Установи Xcode
+Command Line Tools и Homebrew, затем из корня проекта выполни:
+
+```bash
+xcode-select --install  # если ещё не установлен
+brew install buf cmake protobuf libmsquic
+make client-macos
+```
+
+Готовый бинарник будет в `client/build-macos/pvp_duel_client`. Gateway можно
+переопределить при запуске:
+
+```bash
+GATEWAY_URL=http://192.168.88.72:8080 ./client/build-macos/pvp_duel_client
+```
+
+CMake автоматически находит Homebrew в `/opt/homebrew` (Apple Silicon) или
+`/usr/local` (Intel). На macOS сертификат Match Server пока намеренно не
+проверяется так же, как в development Linux-клиенте.
+
 ### Переносимый Linux-клиент (AppImage)
 
 Собрать x86_64 AppImage с адресом Gateway по умолчанию:
