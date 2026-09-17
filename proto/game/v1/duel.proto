@@ -22,6 +22,8 @@ message PlayerState {
   sint32 position_y = 3;
   int32 hp = 4;
   uint32 last_acked_input_tick = 5;
+  sint32 facing_x = 6;
+  sint32 facing_y = 7;
 }
 
 // ACTIVE and FINISHED retain their original numeric values for wire compatibility.

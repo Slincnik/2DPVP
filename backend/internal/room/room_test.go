@@ -105,6 +105,61 @@ func TestRoom_StepClampsPositionToArena(t *testing.T) {
 	}
 }
 
+func TestRoom_DirectionalAttackHitboxOnlyHitsForwardTarget(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name    string
+		targetX int32
+		targetY int32
+		wantHit bool
+	}{
+		{name: "forward target", targetX: 90, wantHit: true},
+		{name: "target behind attacker", targetX: -30},
+		{name: "target outside hitbox width", targetY: 66},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			duel := newActiveRoom(t)
+			duel.players[0].PositionX = 0
+			duel.players[0].PositionY = 0
+			duel.players[0].FacingX = 1
+			duel.players[0].FacingY = 0
+			duel.players[1].PositionX = test.targetX
+			duel.players[1].PositionY = test.targetY
+			if err := duel.SubmitInput("alice", Input{Tick: 1, Attack: true}); err != nil {
+				t.Fatalf("SubmitInput() error = %v", err)
+			}
+
+			snapshot := duel.Step()
+			gotHit := snapshot.Players[1].HP == InitialHP-AttackDamage
+			if gotHit != test.wantHit {
+				t.Errorf("hit = %t, want %t (bob HP %d)", gotHit, test.wantHit, snapshot.Players[1].HP)
+			}
+		})
+	}
+}
+
+func TestRoom_MovementChangesFacingForAttack(t *testing.T) {
+	t.Parallel()
+
+	duel := newActiveRoom(t)
+	duel.players[0].PositionX = 0
+	duel.players[0].PositionY = 0
+	duel.players[1].PositionX = 0
+	duel.players[1].PositionY = 60
+	if err := duel.SubmitInput("alice", Input{Tick: 1, MoveY: 1, Attack: true}); err != nil {
+		t.Fatalf("SubmitInput() error = %v", err)
+	}
+
+	snapshot := duel.Step()
+	if snapshot.Players[0].FacingX != 0 || snapshot.Players[0].FacingY != 1 {
+		t.Errorf("alice facing = (%d, %d), want (0, 1)", snapshot.Players[0].FacingX, snapshot.Players[0].FacingY)
+	}
+	if snapshot.Players[1].HP != InitialHP-AttackDamage {
+		t.Errorf("bob HP = %d, want %d", snapshot.Players[1].HP, InitialHP-AttackDamage)
+	}
+}
+
 func TestRoom_SubmitInputIgnoresStaleInput(t *testing.T) {
 	t.Parallel()
 

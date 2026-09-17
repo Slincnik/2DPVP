@@ -7,14 +7,16 @@ import (
 )
 
 const (
-	TickRate           = 30
-	CountdownTicks     = 3 * TickRate
-	MatchDurationTicks = 90 * TickRate
-	InitialHP          = 100
-	MovementPerTick    = 10
-	AttackDamage       = 20
-	AttackRange        = 80
-	AttackCooldown     = 15
+	TickRate               = 30
+	CountdownTicks         = 3 * TickRate
+	MatchDurationTicks     = 90 * TickRate
+	InitialHP              = 100
+	MovementPerTick        = 10
+	AttackDamage           = 20
+	AttackHitboxDepth      = 80
+	AttackHitboxHalfWidth  = 45
+	PlayerHitboxHalfExtent = 20
+	AttackCooldown         = 15
 
 	ArenaMinX = -500
 	ArenaMaxX = 500
@@ -61,6 +63,8 @@ type PlayerState struct {
 	PositionY          int32
 	HP                 int32
 	LastAckedInputTick uint32
+	FacingX            int8
+	FacingY            int8
 }
 
 type Snapshot struct {
@@ -91,8 +95,8 @@ func New(playerA, playerB string) (*Room, error) {
 
 	return &Room{
 		players: [2]PlayerState{
-			{ID: playerA, PositionX: PlayerASpawnX, HP: InitialHP},
-			{ID: playerB, PositionX: PlayerBSpawnX, HP: InitialHP},
+			{ID: playerA, PositionX: PlayerASpawnX, HP: InitialHP, FacingX: 1},
+			{ID: playerB, PositionX: PlayerBSpawnX, HP: InitialHP, FacingX: -1},
 		},
 		status: MatchCountdown,
 	}, nil
@@ -168,6 +172,7 @@ func (r *Room) applyMovement() {
 		}
 
 		input := r.inputs[index]
+		r.players[index].updateFacing(input)
 		r.players[index].PositionX = clampPosition(
 			r.players[index].PositionX+int32(input.MoveX)*MovementPerTick,
 			ArenaMinX,
@@ -186,7 +191,7 @@ func (r *Room) applyAttacks() {
 	var damage [2]int32
 	for attacker := range r.players {
 		target := 1 - attacker
-		if !r.canAttack(attacker) || !inAttackRange(r.players[attacker], r.players[target]) {
+		if !r.canAttack(attacker) || !attackHitboxIntersects(r.players[attacker], r.players[target]) {
 			continue
 		}
 
@@ -254,8 +259,51 @@ func clampPosition(position, minimum, maximum int32) int32 {
 	return min(max(position, minimum), maximum)
 }
 
-func inAttackRange(attacker, target PlayerState) bool {
-	deltaX := attacker.PositionX - target.PositionX
-	deltaY := attacker.PositionY - target.PositionY
-	return deltaX*deltaX+deltaY*deltaY <= AttackRange*AttackRange
+func (player *PlayerState) updateFacing(input Input) {
+	if input.MoveX == 0 && input.MoveY == 0 {
+		return
+	}
+	if absolute(int(input.MoveX)) >= absolute(int(input.MoveY)) {
+		player.FacingX = input.MoveX
+		player.FacingY = 0
+		return
+	}
+	player.FacingX = 0
+	player.FacingY = input.MoveY
+}
+
+// attackHitboxIntersects tests an axis-aligned forward attack rectangle against
+// the target's body hitbox. Facing is cardinal, so all calculations stay
+// deterministic integer arithmetic.
+func attackHitboxIntersects(attacker, target PlayerState) bool {
+	targetMinX := target.PositionX - PlayerHitboxHalfExtent
+	targetMaxX := target.PositionX + PlayerHitboxHalfExtent
+	targetMinY := target.PositionY - PlayerHitboxHalfExtent
+	targetMaxY := target.PositionY + PlayerHitboxHalfExtent
+
+	switch {
+	case attacker.FacingX > 0:
+		return rangesOverlap(attacker.PositionX, attacker.PositionX+AttackHitboxDepth, targetMinX, targetMaxX) &&
+			rangesOverlap(attacker.PositionY-AttackHitboxHalfWidth, attacker.PositionY+AttackHitboxHalfWidth, targetMinY, targetMaxY)
+	case attacker.FacingX < 0:
+		return rangesOverlap(attacker.PositionX-AttackHitboxDepth, attacker.PositionX, targetMinX, targetMaxX) &&
+			rangesOverlap(attacker.PositionY-AttackHitboxHalfWidth, attacker.PositionY+AttackHitboxHalfWidth, targetMinY, targetMaxY)
+	case attacker.FacingY > 0:
+		return rangesOverlap(attacker.PositionX-AttackHitboxHalfWidth, attacker.PositionX+AttackHitboxHalfWidth, targetMinX, targetMaxX) &&
+			rangesOverlap(attacker.PositionY, attacker.PositionY+AttackHitboxDepth, targetMinY, targetMaxY)
+	default: // FacingY < 0
+		return rangesOverlap(attacker.PositionX-AttackHitboxHalfWidth, attacker.PositionX+AttackHitboxHalfWidth, targetMinX, targetMaxX) &&
+			rangesOverlap(attacker.PositionY-AttackHitboxDepth, attacker.PositionY, targetMinY, targetMaxY)
+	}
+}
+
+func rangesOverlap(firstMin, firstMax, secondMin, secondMax int32) bool {
+	return firstMin <= secondMax && secondMin <= firstMax
+}
+
+func absolute(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }

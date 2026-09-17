@@ -15,12 +15,19 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace {
 
 constexpr float kSimulationStep = 1.0F / 30.0F;
 constexpr float kWorldScale = 0.7F;
+constexpr float kAttackFlashDuration = 0.18F;
+constexpr float kHitFlashDuration = 0.35F;
+constexpr float kDamageTextDuration = 0.65F;
+constexpr float kAttackFeedbackCooldown = 0.5F;
+constexpr float kTwoPi = 6.28318530718F;
 constexpr Vector2 kArenaCenter{640.0F, 360.0F};
 
 using AuthResult = duel::api::Result<duel::api::AuthSession>;
@@ -41,6 +48,14 @@ enum class Screen {
 struct Endpoint {
     std::string host;
     std::uint16_t port = 0;
+};
+
+struct PlayerVisualState {
+    int hp = -1;
+    int damage = 0;
+    float attackFlash = 0.0F;
+    float hitFlash = 0.0F;
+    float damageText = 0.0F;
 };
 
 std::optional<Endpoint> ParseEndpoint(const std::string& address) {
@@ -120,9 +135,110 @@ Vector2 ScreenPosition(const ::game::v1::PlayerState& player) {
     };
 }
 
+Color WithAlpha(Color color, float alpha) {
+    color.a = static_cast<unsigned char>(std::clamp(alpha, 0.0F, 255.0F));
+    return color;
+}
+
+bool SoundReady(const Sound& sound) {
+    return sound.stream.buffer != nullptr;
+}
+
+Sound MakeTone(float frequency, float durationSeconds, float volume) {
+    constexpr unsigned int sampleRate = 44100;
+    const auto frameCount = static_cast<unsigned int>(durationSeconds * static_cast<float>(sampleRate));
+    std::vector<std::int16_t> samples(frameCount);
+    for (unsigned int index = 0; index < frameCount; ++index) {
+        const float t = static_cast<float>(index) / static_cast<float>(sampleRate);
+        const float fade = 1.0F - static_cast<float>(index) / static_cast<float>(frameCount);
+        samples[index] = static_cast<std::int16_t>(
+            32767.0F * volume * fade * std::sin(kTwoPi * frequency * t)
+        );
+    }
+
+    Wave wave{};
+    wave.frameCount = frameCount;
+    wave.sampleRate = sampleRate;
+    wave.sampleSize = 16;
+    wave.channels = 1;
+    wave.data = samples.data();
+    return LoadSoundFromWave(wave);
+}
+
+Vector2 FacingDirection(const ::game::v1::PlayerState& player) {
+    return Vector2{
+        static_cast<float>(player.facing_x()),
+        static_cast<float>(player.facing_y()),
+    };
+}
+
+void DrawAttackPulse(const ::game::v1::PlayerState& player, const PlayerVisualState& visual) {
+    if (visual.attackFlash <= 0.0F) {
+        return;
+    }
+    const float remaining = std::clamp(visual.attackFlash / kAttackFlashDuration, 0.0F, 1.0F);
+    const float progress = 1.0F - remaining;
+    const auto position = ScreenPosition(player);
+    const auto direction = FacingDirection(player);
+    const Vector2 hitboxCenter{
+        position.x + direction.x * 40.0F * kWorldScale,
+        position.y + direction.y * 40.0F * kWorldScale,
+    };
+    const bool horizontal = direction.x != 0.0F;
+    const Rectangle hitbox{
+        hitboxCenter.x - (horizontal ? 40.0F : 45.0F) * kWorldScale,
+        hitboxCenter.y - (horizontal ? 45.0F : 40.0F) * kWorldScale,
+        (horizontal ? 80.0F : 90.0F) * kWorldScale,
+        (horizontal ? 90.0F : 80.0F) * kWorldScale,
+    };
+    DrawRectangleLinesEx(hitbox, 2.0F, WithAlpha(ORANGE, 210.0F * remaining));
+    DrawCircleLines(
+        static_cast<int>(position.x),
+        static_cast<int>(position.y),
+        28.0F + 28.0F * progress,
+        WithAlpha(GOLD, 120.0F * remaining)
+    );
+}
+
+void DrawHitFlash(const ::game::v1::PlayerState& player, const PlayerVisualState& visual) {
+    if (visual.hitFlash <= 0.0F && visual.damageText <= 0.0F) {
+        return;
+    }
+    const auto position = ScreenPosition(player);
+    if (visual.hitFlash > 0.0F) {
+        const float remaining = std::clamp(visual.hitFlash / kHitFlashDuration, 0.0F, 1.0F);
+        DrawCircleV(position, 27.0F, WithAlpha(WHITE, 95.0F * remaining));
+        DrawCircleLines(
+            static_cast<int>(position.x),
+            static_cast<int>(position.y),
+            31.0F,
+            WithAlpha(YELLOW, 220.0F * remaining)
+        );
+    }
+    if (visual.damageText > 0.0F && visual.damage > 0) {
+        const float remaining = std::clamp(visual.damageText / kDamageTextDuration, 0.0F, 1.0F);
+        const float rise = 28.0F * (1.0F - remaining);
+        const std::string text = "-" + std::to_string(visual.damage);
+        DrawText(
+            text.c_str(),
+            static_cast<int>(position.x - 12),
+            static_cast<int>(position.y - 70.0F - rise),
+            20,
+            WithAlpha(ORANGE, 255.0F * remaining)
+        );
+    }
+}
+
 void DrawPlayer(const ::game::v1::PlayerState& player, Color color) {
     const auto position = ScreenPosition(player);
+    const auto direction = FacingDirection(player);
     DrawCircleV(position, 22.0F, color);
+    DrawLineEx(
+        position,
+        Vector2{position.x + direction.x * 28.0F, position.y + direction.y * 28.0F},
+        3.0F,
+        RAYWHITE
+    );
     DrawText(
         player.player_id().c_str(),
         static_cast<int>(position.x - 30),
@@ -134,7 +250,7 @@ void DrawPlayer(const ::game::v1::PlayerState& player, Color color) {
     DrawRectangle(
         static_cast<int>(position.x - 30),
         static_cast<int>(position.y + 30),
-        static_cast<int>(60.0F * static_cast<float>(player.hp()) / 100.0F),
+        static_cast<int>(60.0F * std::clamp(static_cast<float>(player.hp()) / 100.0F, 0.0F, 1.0F)),
         7,
         color
     );
@@ -145,6 +261,20 @@ void DrawPlayer(const ::game::v1::PlayerState& player, Color color) {
 int main() {
     InitWindow(1280, 720, "2D PvP Duel");
     SetTargetFPS(144);
+    InitAudioDevice();
+    const bool audioReady = IsAudioDeviceReady();
+    Sound attackSound{};
+    Sound hitSound{};
+    if (audioReady) {
+        attackSound = MakeTone(880.0F, 0.08F, 0.18F);
+        hitSound = MakeTone(180.0F, 0.12F, 0.35F);
+        if (SoundReady(attackSound)) {
+            SetSoundVolume(attackSound, 0.45F);
+        }
+        if (SoundReady(hitSound)) {
+            SetSoundVolume(hitSound, 0.6F);
+        }
+    }
 
     const char* configuredGateway = std::getenv("GATEWAY_URL");
     duel::api::GatewayClient gateway(
@@ -171,8 +301,59 @@ int main() {
     ::game::v1::MatchEnd matchEnd;
     duel::game::Prediction prediction;
     duel::game::InterpolationBuffer opponentInterpolation;
+    std::unordered_map<std::string, PlayerVisualState> playerVisuals;
     std::uint32_t inputTick = 0;
     float accumulator = 0.0F;
+    float localAttackSoundCooldown = 0.0F;
+
+    auto resetPlayerVisuals = [&] {
+        playerVisuals.clear();
+    };
+
+    auto seedPlayerVisuals = [&](const ::game::v1::WorldSnapshot& snapshot) {
+        for (const auto& player : snapshot.players()) {
+            playerVisuals[player.player_id()].hp = player.hp();
+        }
+    };
+
+    auto updatePlayerVisuals = [&](const ::game::v1::WorldSnapshot& snapshot) {
+        // Create all entries before retaining references into unordered_map: an
+        // insertion during hit processing could otherwise rehash and invalidate
+        // the current player's reference.
+        for (const auto& player : snapshot.players()) {
+            playerVisuals.try_emplace(player.player_id());
+        }
+        for (const auto& player : snapshot.players()) {
+            auto& visual = playerVisuals.at(player.player_id());
+            if (visual.hp >= 0 && player.hp() < visual.hp) {
+                visual.damage = visual.hp - player.hp();
+                visual.hitFlash = kHitFlashDuration;
+                visual.damageText = kDamageTextDuration;
+                if (audioReady && SoundReady(hitSound)) {
+                    PlaySound(hitSound);
+                }
+                for (const auto& attacker : snapshot.players()) {
+                    if (attacker.player_id() != player.player_id()) {
+                        auto& attackerVisual = playerVisuals.at(attacker.player_id());
+                        attackerVisual.attackFlash = std::max(
+                            attackerVisual.attackFlash,
+                            kAttackFlashDuration
+                        );
+                    }
+                }
+            }
+            visual.hp = player.hp();
+        }
+    };
+
+    auto tickPlayerVisuals = [&](float deltaSeconds) {
+        for (auto& entry : playerVisuals) {
+            auto& visual = entry.second;
+            visual.attackFlash = std::max(0.0F, visual.attackFlash - deltaSeconds);
+            visual.hitFlash = std::max(0.0F, visual.hitFlash - deltaSeconds);
+            visual.damageText = std::max(0.0F, visual.damageText - deltaSeconds);
+        }
+    };
 
     auto beginAuth = [&](bool registration) {
         if (login.empty() || password.empty()) {
@@ -280,8 +461,10 @@ int main() {
                 world.Clear();
                 prediction = duel::game::Prediction{};
                 opponentInterpolation = duel::game::InterpolationBuffer{};
+                resetPlayerVisuals();
                 inputTick = 0;
                 accumulator = 0.0F;
+                localAttackSoundCooldown = 0.0F;
                 matchStarted = false;
                 matchEnd.Clear();
                 serverTickRate = 30;
@@ -300,9 +483,11 @@ int main() {
                     matchStarted = true;
                     serverTickRate = start->tick_rate();
                     world = start->initial_snapshot();
+                    seedPlayerVisuals(world);
                     message = "Match starting";
                 }
                 if (auto snapshot = network->PollSnapshot()) {
+                    updatePlayerVisuals(*snapshot);
                     world = std::move(*snapshot);
                     for (const auto& player : world.players()) {
                         if (player.player_id() == session.userId) {
@@ -315,6 +500,7 @@ int main() {
                 }
                 if (auto end = network->PollMatchEnd()) {
                     matchEnd = std::move(*end);
+                    updatePlayerVisuals(matchEnd.final_snapshot());
                     world = matchEnd.final_snapshot();
                     matchmakingCleanup.MatchEnded();
                     screen = Screen::Result;
@@ -335,13 +521,26 @@ int main() {
                         - static_cast<std::int32_t>(IsKeyDown(KEY_A));
                     const std::int32_t moveY = static_cast<std::int32_t>(IsKeyDown(KEY_S))
                         - static_cast<std::int32_t>(IsKeyDown(KEY_W));
+                    const bool attack = IsKeyDown(KEY_SPACE);
                     ++inputTick;
                     prediction.ApplyInput(inputTick, moveX, moveY);
-                    network->SendInput(inputTick, moveX, moveY, IsKeyDown(KEY_SPACE));
+                    if (attack) {
+                        if (localAttackSoundCooldown <= 0.0F) {
+                            playerVisuals[session.userId].attackFlash = kAttackFlashDuration;
+                            if (audioReady && SoundReady(attackSound)) {
+                                PlaySound(attackSound);
+                            }
+                            // The server applies held attacks every 15 ticks (0.5 s).
+                            localAttackSoundCooldown = kAttackFeedbackCooldown;
+                        }
+                    }
+                    network->SendInput(inputTick, moveX, moveY, attack);
                 }
             }
             prediction.AdvanceVisual(std::min(frameTime * 12.0F, 1.0F));
             opponentInterpolation.Advance(frameTime);
+            tickPlayerVisuals(frameTime);
+            localAttackSoundCooldown = std::max(0.0F, localAttackSoundCooldown - frameTime);
         }
 
         BeginDrawing();
@@ -387,7 +586,13 @@ int main() {
                     player.set_position_x(static_cast<std::int32_t>(std::lround(interpolated.x)));
                     player.set_position_y(static_cast<std::int32_t>(std::lround(interpolated.y)));
                 }
+                const auto visualIt = playerVisuals.find(player.player_id());
+                const PlayerVisualState visual = visualIt != playerVisuals.end()
+                    ? visualIt->second
+                    : PlayerVisualState{};
+                DrawAttackPulse(player, visual);
                 DrawPlayer(player, isLocal ? SKYBLUE : RED);
+                DrawHitFlash(player, visual);
             }
         } else if (screen == Screen::Result) {
             const std::string result = duel::game::MatchResultLabel(matchEnd, session.userId);
@@ -424,6 +629,15 @@ int main() {
         EndDrawing();
     }
 
+    if (audioReady) {
+        if (SoundReady(attackSound)) {
+            UnloadSound(attackSound);
+        }
+        if (SoundReady(hitSound)) {
+            UnloadSound(hitSound);
+        }
+        CloseAudioDevice();
+    }
     CloseWindow();
     return 0;
 }

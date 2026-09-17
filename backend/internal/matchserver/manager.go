@@ -360,6 +360,8 @@ func snapshotToProto(snapshot room.Snapshot) *gamev1.WorldSnapshot {
 			PositionY:          player.PositionY,
 			Hp:                 player.HP,
 			LastAckedInputTick: player.LastAckedInputTick,
+			FacingX:            int32(player.FacingX),
+			FacingY:            int32(player.FacingY),
 		})
 	}
 
