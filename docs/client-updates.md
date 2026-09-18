@@ -18,8 +18,9 @@ provided. The release workflow embeds the repository's `latest.json` URL.
 
 The macOS build keeps the existing native secure storage implementation: the
 refresh token is stored in macOS Keychain through `Security.framework`. The
-macOS CI build is currently an unsigned ARM64 validation artifact; packaging
-and automatic replacement of a `.app` bundle will be added separately.
+macOS `.app` is ad-hoc signed and its bundled updater replaces the `.app` after
+verifying the downloaded zip. It is not notarized because that requires an
+Apple Developer Program certificate.
 
 Create a release with:
 

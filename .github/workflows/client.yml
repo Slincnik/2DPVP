@@ -60,6 +60,7 @@ jobs:
 
           mkdir -p dist/PvPDuel.app/Contents/MacOS
           cp client/build-macos/pvp_duel_client dist/PvPDuel.app/Contents/MacOS/PvPDuel
+          cp client/build-macos/pvp_duel_updater dist/PvPDuel.app/Contents/MacOS/pvp_duel_updater
           cat > dist/PvPDuel.app/Contents/Info.plist <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -102,8 +103,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          printf '{"version":"%s","url":"https://github.com/%s/releases/latest/download/PvPDuel-x86_64.AppImage","sha256":"%s"}\n' \
-            "$version" "$GITHUB_REPOSITORY" "$(cut -d' ' -f1 dist/PvPDuel-x86_64.AppImage.sha256)" \
+          linux_sha256="$(cut -d' ' -f1 dist/PvPDuel-x86_64.AppImage.sha256)"
+          macos_sha256="$(cut -d' ' -f1 dist/PvPDuel-macos-arm64.zip.sha256)"
+          printf '{"version":"%s","platforms":{"linux-x86_64":{"url":"https://github.com/%s/releases/latest/download/PvPDuel-x86_64.AppImage","sha256":"%s"},"macos-arm64":{"url":"https://github.com/%s/releases/latest/download/PvPDuel-macos-arm64.zip","sha256":"%s"}}}\n' \
+            "$version" "$GITHUB_REPOSITORY" "$linux_sha256" "$GITHUB_REPOSITORY" "$macos_sha256" \
             > dist/latest.json
           gh release create "$GITHUB_REF_NAME" \
             dist/PvPDuel-x86_64.AppImage \

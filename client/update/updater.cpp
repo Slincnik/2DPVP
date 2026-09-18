@@ -76,34 +76,73 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const auto temporary = target.string() + ".update.tmp";
-    const auto backup = target.string() + ".update.bak";
+    const auto temporary = std::filesystem::temp_directory_path() /
+        ("pvp-duel-update-" + std::to_string(static_cast<long long>(getpid())));
+    const auto temporaryFile = temporary.string() + ".download";
     {
-        std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
+        std::ofstream output(temporaryFile, std::ios::binary | std::ios::trunc);
         if (!output || !output.write(content.data(), static_cast<std::streamsize>(content.size()))) {
-            std::remove(temporary.c_str());
+            std::remove(temporaryFile.c_str());
             return 1;
         }
     }
-    if (chmod(temporary.c_str(), 0755) != 0) {
-        std::remove(temporary.c_str());
-        return 1;
-    }
 
     std::error_code error;
+#ifdef __APPLE__
+    std::filesystem::create_directories(temporary, error);
+    if (error) {
+        std::remove(temporaryFile.c_str());
+        return 1;
+    }
+    const auto quote = [](const std::string& value) {
+        return "'" + value + "'";
+    };
+    const auto command = "ditto -x -k --sequesterRsrc " + quote(temporaryFile) + " " + quote(temporary.string());
+    if (std::system(command.c_str()) != 0) {
+        std::filesystem::remove_all(temporary);
+        std::remove(temporaryFile.c_str());
+        return 1;
+    }
+    const auto extracted = temporary / "PvPDuel.app";
+    const auto backup = target.string() + ".update.bak";
     std::filesystem::remove(backup, error);
     std::filesystem::rename(target, backup, error);
     if (error) {
-        std::remove(temporary.c_str());
+        std::filesystem::remove_all(temporary);
+        std::remove(temporaryFile.c_str());
         return 1;
     }
-    std::filesystem::rename(temporary, target, error);
+    std::filesystem::rename(extracted, target, error);
+    if (error) {
+        std::filesystem::rename(backup, target, error);
+        std::filesystem::remove_all(temporary);
+        std::remove(temporaryFile.c_str());
+        return 1;
+    }
+    std::filesystem::remove(backup, error);
+    std::filesystem::remove_all(temporary, error);
+    std::remove(temporaryFile.c_str());
+    const auto executable = target / "Contents/MacOS/PvPDuel";
+    execl(executable.c_str(), executable.c_str(), nullptr);
+#else
+    const auto backup = target.string() + ".update.bak";
+    if (chmod(temporaryFile.c_str(), 0755) != 0) {
+        std::remove(temporaryFile.c_str());
+        return 1;
+    }
+    std::filesystem::remove(backup, error);
+    std::filesystem::rename(target, backup, error);
+    if (error) {
+        std::remove(temporaryFile.c_str());
+        return 1;
+    }
+    std::filesystem::rename(temporaryFile, target, error);
     if (error) {
         std::filesystem::rename(backup, target, error);
         return 1;
     }
     std::filesystem::remove(backup, error);
-
     execl(target.c_str(), target.c_str(), nullptr);
+#endif
     return errno == 0 ? 1 : errno;
 }

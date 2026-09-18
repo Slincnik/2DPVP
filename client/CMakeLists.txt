@@ -199,7 +199,7 @@ target_link_libraries(duel_client_app PUBLIC duel_app PRIVATE
 )
 target_compile_options(duel_client_app PRIVATE -Wall -Wextra -Wpedantic)
 
-if(UNIX AND NOT APPLE)
+if(UNIX)
     add_executable(pvp_duel_updater update/updater.cpp)
     target_link_libraries(pvp_duel_updater PRIVATE httplib::httplib OpenSSL::Crypto)
     target_compile_options(pvp_duel_updater PRIVATE -Wall -Wextra -Wpedantic)

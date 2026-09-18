@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -99,24 +100,41 @@ std::string UpdaterPath() {
     return {};
 }
 
-bool StartUpdater(const std::string& url, const std::string& sha256) {
+bool StartUpdater(const std::string& url, const std::string& sha256, const std::string& executablePath) {
+#ifdef __APPLE__
+    std::filesystem::path applicationPath;
+    if (const auto* configured = std::getenv("PVP_DUEL_APP_PATH");
+        configured != nullptr && *configured != '\0') {
+        applicationPath = configured;
+    } else if (!executablePath.empty()) {
+        applicationPath = std::filesystem::absolute(executablePath).parent_path().parent_path().parent_path();
+    }
+    if (applicationPath.empty() || applicationPath.extension() != ".app") {
+        return false;
+    }
+    const auto updater = applicationPath / "Contents/MacOS/pvp_duel_updater";
+    const auto target = applicationPath.string();
+#else
+    (void)executablePath;
     const auto appImage = CurrentAppImage();
-    const auto updater = UpdaterPath();
+    const auto updater = std::filesystem::path(UpdaterPath());
     if (appImage.empty() || updater.empty()) {
         return false;
     }
+    const auto target = appImage;
+#endif
 
     const auto pid = fork();
     if (pid != 0) {
         return pid > 0;
     }
-    execl(updater.c_str(), updater.c_str(), appImage.c_str(), url.c_str(), sha256.c_str(), nullptr);
+    execl(updater.c_str(), updater.c_str(), target.c_str(), url.c_str(), sha256.c_str(), nullptr);
     _exit(127);
 }
 
 } // namespace
 
-void CheckAndStart(const std::string& manifestUrl) {
+void CheckAndStart(const std::string& manifestUrl, const std::string& executablePath) {
     if (manifestUrl.empty()) {
         return;
     }
@@ -138,9 +156,16 @@ void CheckAndStart(const std::string& manifestUrl) {
     try {
         const auto body = nlohmann::json::parse(response->body);
         const auto version = body.at("version").get<std::string>();
-        const auto url = body.at("url").get<std::string>();
-        const auto sha256 = body.at("sha256").get<std::string>();
-        if (!IsNewer(version) || sha256.size() != 64 || !StartUpdater(url, sha256)) {
+        const auto platform =
+#ifdef __APPLE__
+            "macos-arm64";
+#else
+            "linux-x86_64";
+#endif
+        const auto release = body.at("platforms").at(platform);
+        const auto url = release.at("url").get<std::string>();
+        const auto sha256 = release.at("sha256").get<std::string>();
+        if (!IsNewer(version) || sha256.size() != 64 || !StartUpdater(url, sha256, executablePath)) {
             return;
         }
         std::cerr << "Updating client to " << version << "...\n";

@@ -4,9 +4,10 @@
 #include <cstdlib>
 #include <string>
 
-int main() {
+int main(int argc, char** argv) {
 #ifdef PVP_DUEL_UPDATE_MANIFEST_URL
-    duel::update::CheckAndStart(PVP_DUEL_UPDATE_MANIFEST_URL);
+    const std::string executablePath = argc > 0 && argv[0] != nullptr ? argv[0] : std::string{};
+    duel::update::CheckAndStart(PVP_DUEL_UPDATE_MANIFEST_URL, executablePath);
 #endif
 #ifdef PVP_DUEL_DEFAULT_GATEWAY_URL
     constexpr const char* defaultGateway = PVP_DUEL_DEFAULT_GATEWAY_URL;

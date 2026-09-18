@@ -6,6 +6,6 @@ namespace duel::update {
 
 // Checks the release manifest and starts the updater when a newer release is
 // available. An empty manifest URL disables update checks (local builds).
-void CheckAndStart(const std::string& manifestUrl);
+void CheckAndStart(const std::string& manifestUrl, const std::string& executablePath);
 
 } // namespace duel::update
