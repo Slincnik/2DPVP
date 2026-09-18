@@ -11,6 +11,17 @@ void Require(bool condition) {
     }
 }
 
+void TestRequestHeaders() {
+    const auto headers = duel::update::http::RequestHeaders();
+    const auto userAgent = headers.find("User-Agent");
+    const auto accept = headers.find("Accept");
+    Require(userAgent != headers.end());
+    Require(accept != headers.end());
+    Require(userAgent->second == duel::update::http::kUserAgent);
+    Require(accept->second == duel::update::http::kAcceptHeader);
+    Require(userAgent->second.find("token") == std::string::npos);
+}
+
 void TestHttpsUrlPolicy() {
     duel::update::http::Url url;
     Require(duel::update::http::ParseHttpsUrl(
@@ -31,6 +42,7 @@ void TestHttpsUrlPolicy() {
 } // namespace
 
 int main() {
+    TestRequestHeaders();
     TestHttpsUrlPolicy();
     return 0;
 }

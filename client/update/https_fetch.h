@@ -20,6 +20,18 @@ struct FetchResult {
     std::string error;
 };
 
+inline constexpr std::string_view kUserAgent =
+    "PvPDuel-Updater/1.0 (+https://github.com/Slincnik/2DPVP)";
+inline constexpr std::string_view kAcceptHeader =
+    "application/json, application/octet-stream;q=0.9, */*;q=0.1";
+
+[[nodiscard]] inline httplib::Headers RequestHeaders() {
+    return {
+        {"Accept", std::string(kAcceptHeader)},
+        {"User-Agent", std::string(kUserAgent)},
+    };
+}
+
 // Parses only absolute HTTPS URLs. Redirects are parsed with this same helper
 // so cpp-httplib cannot silently downgrade a request to HTTP.
 [[nodiscard]] inline bool ParseHttpsUrl(std::string_view value, Url& result) {
@@ -54,6 +66,7 @@ struct FetchResult {
         httplib::SSLClient client(current.origin.substr(std::string_view("https://").size()));
         client.set_connection_timeout(timeoutSeconds, 0);
         client.set_read_timeout(timeoutSeconds, 0);
+        client.set_default_headers(RequestHeaders());
         // Do not enable set_follow_location(): cpp-httplib follows an HTTP
         // Location by constructing a plain Client, which would violate the
         // updater's HTTPS-only policy.
@@ -68,9 +81,14 @@ struct FetchResult {
         const bool redirectResponse = response->status == 301 || response->status == 302
             || response->status == 303 || response->status == 307 || response->status == 308;
         if (!redirectResponse) {
-            return {
-                .error = "HTTPS request returned status " + std::to_string(response->status),
-            };
+            std::string error = "HTTPS request returned status "
+                + std::to_string(response->status);
+            if (response->status == 403) {
+                error += " (access denied or request rate limited)";
+            } else if (response->status == 429) {
+                error += " (request rate limited; retry later)";
+            }
+            return {.error = std::move(error)};
         }
         if (redirect == kMaximumRedirects) {
             return {.error = "HTTPS redirect limit exceeded"};
