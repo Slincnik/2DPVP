@@ -1,4 +1,6 @@
 #include "api/gateway_client.h"
+#include "auth/secure_storage.h"
+#include "auth/session_manager.h"
 #include "game/interpolation.h"
 #include "game/match_lifecycle.h"
 #include "game/prediction.h"
@@ -35,6 +37,7 @@ using QueueResult = duel::api::Result<duel::api::QueueStatus>;
 
 enum class Screen {
     Login,
+    Restoring,
     AuthPending,
     Ready,
     QueuePending,
@@ -282,15 +285,19 @@ int main() {
     constexpr const char* defaultGateway = "http://localhost:8080";
 #endif
     const char* configuredGateway = std::getenv("GATEWAY_URL");
-    duel::api::GatewayClient gateway(
-        configuredGateway != nullptr ? configuredGateway : defaultGateway);
+    const std::string gatewayUrl = configuredGateway != nullptr ? configuredGateway : defaultGateway;
+    duel::api::GatewayClient gateway(gatewayUrl);
+    auto secureStorage = duel::auth::CreateSecureStorage();
+    duel::auth::SessionManager sessionManager(gateway, *secureStorage, gatewayUrl);
     std::unique_ptr<duel::net::QuicClient> network;
     duel::api::AuthSession session;
     std::future<AuthResult> authFuture;
+    std::future<duel::api::Result<bool>> restoreFuture;
     std::future<QueueResult> queueFuture;
     std::future<bool> connectFuture;
 
-    Screen screen = Screen::Login;
+    Screen screen = Screen::Restoring;
+    restoreFuture = std::async(std::launch::async, [&] { return sessionManager.Restore(); });
     std::string login;
     std::string password;
     std::string message = "Login or create an account";
@@ -369,15 +376,14 @@ int main() {
         const auto passwordCopy = password;
         authFuture = std::async(std::launch::async, [&, registration, loginCopy, passwordCopy] {
             return registration
-                ? gateway.Register(loginCopy, passwordCopy)
-                : gateway.Login(loginCopy, passwordCopy);
+                ? sessionManager.Register(loginCopy, passwordCopy)
+                : sessionManager.Login(loginCopy, passwordCopy);
         });
         screen = Screen::AuthPending;
         message = registration ? "Creating account..." : "Signing in...";
     };
 
     auto beginQueueRequest = [&](bool join) {
-        const auto accessToken = session.accessToken;
         const bool resetCompletedMatch = join && matchmakingCleanup.QueueResetRequired();
         queueRequestReset = resetCompletedMatch;
         if (join) {
@@ -385,14 +391,14 @@ int main() {
             // before its queue entry is removed and a new ticket is requested.
             network.reset();
         }
-        queueFuture = std::async(std::launch::async, [&, join, resetCompletedMatch, accessToken] {
+        queueFuture = std::async(std::launch::async, [&, join, resetCompletedMatch] {
             if (resetCompletedMatch) {
-                const auto left = gateway.LeaveQueue(accessToken);
+                const auto left = sessionManager.LeaveQueue();
                 if (!left) {
                     return QueueResult{.error = left.error};
                 }
             }
-            return join ? gateway.JoinQueue(accessToken) : gateway.QueueStatusFor(accessToken);
+            return join ? sessionManager.JoinQueue() : sessionManager.QueueStatus();
         });
         screen = Screen::QueuePending;
         message = join ? "Joining queue..." : "Checking queue...";
@@ -438,6 +444,26 @@ int main() {
     while (!WindowShouldClose()) {
         const float frameTime = GetFrameTime();
 
+        if (screen == Screen::Restoring && FutureReady(restoreFuture)) {
+            const auto result = restoreFuture.get();
+            if (!result) {
+                message = "Saved session could not be restored: " + result.error;
+                screen = Screen::Login;
+            } else if (result.value) {
+                const auto restored = sessionManager.CurrentSession();
+                if (restored) {
+                    session = *restored;
+                    message = "Welcome back, " + session.login;
+                    screen = Screen::Ready;
+                } else {
+                    message = "Login or create an account";
+                    screen = Screen::Login;
+                }
+            } else {
+                message = "Login or create an account";
+                screen = Screen::Login;
+            }
+        }
         if (screen == Screen::AuthPending && FutureReady(authFuture)) {
             auto result = authFuture.get();
             if (!result) {
@@ -447,6 +473,10 @@ int main() {
                 session = std::move(result.value);
                 password.clear();
                 message = "Welcome, " + session.login;
+                const auto warning = sessionManager.TakeWarning();
+                if (!warning.empty()) {
+                    message += "\n" + warning;
+                }
                 screen = Screen::Ready;
             }
         }
@@ -621,6 +651,12 @@ int main() {
             DrawText(message.c_str(), 420, 250, 22, LIGHTGRAY);
             if (screen == Screen::Ready && Button(Rectangle{520, 330, 240, 52}, "Find match")) {
                 beginQueueRequest(true);
+            }
+            if (screen == Screen::Ready && Button(Rectangle{520, 400, 240, 52}, "Logout")) {
+                const auto logout = sessionManager.Logout();
+                session = {};
+                screen = Screen::Login;
+                message = logout ? "Logged out" : "Logged out locally: " + logout.error;
             }
             if (screen == Screen::Waiting) {
                 DrawCircleSector(Vector2{640, 360}, 30, 0, 280, 32, SKYBLUE);

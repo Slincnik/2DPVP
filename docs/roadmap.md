@@ -82,15 +82,15 @@ Backend, C++ клиент и сквозной сценарий двух игро
 
 ## P1 — клиентская auth-сессия
 
-- [ ] Автоматически обновлять access token через refresh token.
-- [ ] Повторять исходный HTTP-запрос после успешного refresh.
-- [ ] Добавить logout и отзыв refresh token.
-- [ ] Выбрать защищённое persistent storage:
-  - Windows Credential Manager;
-  - macOS Keychain;
-  - Secret Service/libsecret на Linux.
-- [ ] Не хранить refresh token открытым текстом.
-- [ ] Восстанавливать пользовательскую сессию при старте клиента.
+- [x] Автоматически обновлять access token через refresh token.
+- [x] Повторять исходный HTTP-запрос после успешного refresh.
+- [x] Добавить logout и отзыв refresh token.
+- [x] Выбрать защищённое persistent storage:
+  - [x] Windows Credential Manager;
+  - [x] macOS Keychain;
+  - [x] Secret Service/libsecret на Linux.
+- [x] Не хранить refresh token открытым текстом.
+- [x] Восстанавливать пользовательскую сессию при старте клиента.
 - [ ] Добавить отдельные экраны профиля, очереди и результата.
 
 ---

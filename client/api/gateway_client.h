@@ -29,6 +29,7 @@ template <typename T>
 struct Result {
     T value{};
     std::string error;
+    int status = 0;
 
     explicit operator bool() const { return error.empty(); }
 };
@@ -40,6 +41,7 @@ public:
     Result<AuthSession> Register(const std::string& login, const std::string& password) const;
     Result<AuthSession> Login(const std::string& login, const std::string& password) const;
     Result<AuthSession> Refresh(const AuthSession& session) const;
+    Result<bool> Logout(const std::string& refreshToken) const;
     Result<QueueStatus> JoinQueue(const std::string& accessToken) const;
     Result<QueueStatus> QueueStatusFor(const std::string& accessToken) const;
     Result<bool> LeaveQueue(const std::string& accessToken) const;

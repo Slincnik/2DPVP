@@ -36,7 +36,7 @@ std::string ResponseError(const httplib::Result& response) {
 
 Result<AuthSession> ParseAuth(const httplib::Result& response) {
     if (!response || response->status < 200 || response->status >= 300) {
-        return {.error = ResponseError(response)};
+        return {.error = ResponseError(response), .status = response ? response->status : 0};
     }
     try {
         const auto body = Json::parse(response->body);
@@ -50,13 +50,13 @@ Result<AuthSession> ParseAuth(const httplib::Result& response) {
             .error = {},
         };
     } catch (const std::exception& error) {
-        return {.error = "Invalid auth response: " + std::string(error.what())};
+        return {.error = "Invalid auth response: " + std::string(error.what()), .status = response->status};
     }
 }
 
 Result<QueueStatus> ParseQueue(const httplib::Result& response) {
     if (!response || response->status < 200 || response->status >= 300) {
-        return {.error = ResponseError(response)};
+        return {.error = ResponseError(response), .status = response ? response->status : 0};
     }
     try {
         const auto body = Json::parse(response->body);
@@ -78,7 +78,7 @@ Result<QueueStatus> ParseQueue(const httplib::Result& response) {
             .error = {},
         };
     } catch (const std::exception& error) {
-        return {.error = "Invalid queue response: " + std::string(error.what())};
+        return {.error = "Invalid queue response: " + std::string(error.what()), .status = response->status};
     }
 }
 
@@ -110,6 +110,16 @@ Result<AuthSession> GatewayClient::Refresh(const AuthSession& session) const {
     return ParseAuth(client.Post("/api/v1/auth/refresh", payload, "application/json"));
 }
 
+Result<bool> GatewayClient::Logout(const std::string& refreshToken) const {
+    auto client = NewClient(baseUrl_);
+    const auto payload = Json{{"refreshToken", refreshToken}}.dump();
+    const auto response = client.Post("/api/v1/auth/logout", payload, "application/json");
+    if (!response || response->status != 204) {
+        return {.error = ResponseError(response), .status = response ? response->status : 0};
+    }
+    return {.value = true, .status = response->status};
+}
+
 Result<QueueStatus> GatewayClient::JoinQueue(const std::string& accessToken) const {
     auto client = NewClient(baseUrl_);
     return ParseQueue(client.Post("/api/v1/queue/join", Bearer(accessToken), "", "application/json"));
@@ -124,9 +134,9 @@ Result<bool> GatewayClient::LeaveQueue(const std::string& accessToken) const {
     auto client = NewClient(baseUrl_);
     const auto response = client.Delete("/api/v1/queue", Bearer(accessToken));
     if (!response || response->status != 204) {
-        return {.error = ResponseError(response)};
+        return {.error = ResponseError(response), .status = response ? response->status : 0};
     }
-    return {.value = true, .error = {}};
+    return {.value = true, .status = response->status};
 }
 
 Result<AuthSession> GatewayClient::Authenticate(
