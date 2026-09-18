@@ -1,0 +1,54 @@
+name: Client
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and test client
+        env:
+          GATEWAY_URL: https://example.invalid
+          PVP_DUEL_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.0.0-dev' }}
+          PVP_DUEL_UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+        run: make appimage
+
+      - name: Verify AppImage
+        run: |
+          test -s dist/PvPDuel-x86_64.AppImage
+          file dist/PvPDuel-x86_64.AppImage
+          sha256sum dist/PvPDuel-x86_64.AppImage > dist/PvPDuel-x86_64.AppImage.sha256
+
+      - name: Upload CI artifact
+        if: startsWith(github.ref, 'refs/tags/v') == false
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvp-duel-client
+          path: |
+            dist/PvPDuel-x86_64.AppImage
+            dist/PvPDuel-x86_64.AppImage.sha256
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          printf '{"version":"%s","url":"https://github.com/%s/releases/latest/download/PvPDuel-x86_64.AppImage","sha256":"%s"}\n' \
+            "$version" "$GITHUB_REPOSITORY" "$(cut -d' ' -f1 dist/PvPDuel-x86_64.AppImage.sha256)" \
+            > dist/latest.json
+          gh release create "$GITHUB_REF_NAME" \
+            dist/PvPDuel-x86_64.AppImage \
+            dist/PvPDuel-x86_64.AppImage.sha256 \
+            dist/latest.json \
+            --title "PvP Duel $GITHUB_REF_NAME" \
+            --generate-notes

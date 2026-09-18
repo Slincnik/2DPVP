@@ -3,6 +3,8 @@ FROM ubuntu:22.04 AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG GATEWAY_URL
+ARG PVP_DUEL_VERSION=0.0.0-dev
+ARG PVP_DUEL_UPDATE_MANIFEST_URL=
 ARG MSQUIC_VERSION=2.5.7
 ARG LINUXDEPLOY_VERSION=1-alpha-20251107-1
 ARG LINUXDEPLOY_SHA256=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
@@ -36,8 +38,12 @@ RUN set -eux; \
     curl -fsSL "https://raw.githubusercontent.com/microsoft/msquic/v${MSQUIC_VERSION}/src/inc/quic_sal_stub.h" -o .deps/msquic/include/quic_sal_stub.h; \
     rm -rf /tmp/msquic /var/lib/apt/lists/*
 
-RUN cmake -S client -B /build -G Ninja -DCMAKE_BUILD_TYPE=Release && \
-    cmake --build /build --target pvp_duel_client --parallel
+RUN cmake -S client -B /build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DPVP_DUEL_VERSION="${PVP_DUEL_VERSION:-0.0.0-dev}" \
+      -DPVP_DUEL_UPDATE_MANIFEST_URL="${PVP_DUEL_UPDATE_MANIFEST_URL:-}" && \
+    cmake --build /build --parallel && \
+    ctest --test-dir /build --output-on-failure
 
 RUN set -eux; \
     test -n "$GATEWAY_URL"; \
@@ -51,6 +57,7 @@ RUN set -eux; \
       'fi' \
       'export GATEWAY_URL' \
       'appdir="${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}"' \
+      'export PVP_DUEL_UPDATER_PATH="$appdir/usr/bin/pvp_duel_updater"' \
       'exec "$appdir/usr/bin/pvp_duel_client" "$@"' \
       > /build/AppDir/usr/bin/pvp-duel-launcher; \
     chmod +x /build/AppDir/usr/bin/pvp-duel-launcher; \
@@ -60,6 +67,7 @@ RUN set -eux; \
     ARCH=x86_64 LDAI_OUTPUT=/out/PvPDuel-x86_64.AppImage /tmp/linuxdeploy --appimage-extract-and-run \
       --appdir /build/AppDir \
       --executable /build/pvp_duel_client \
+      --executable /build/pvp_duel_updater \
       --desktop-file /src/client/packaging/pvp-duel.desktop \
       --icon-file /src/client/packaging/pvp-duel.svg \
       --output appimage; \

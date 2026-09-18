@@ -1,9 +1,13 @@
 #include "app/application.h"
+#include "update/client_updater.h"
 
 #include <cstdlib>
 #include <string>
 
 int main() {
+#ifdef PVP_DUEL_UPDATE_MANIFEST_URL
+    duel::update::CheckAndStart(PVP_DUEL_UPDATE_MANIFEST_URL);
+#endif
 #ifdef PVP_DUEL_DEFAULT_GATEWAY_URL
     constexpr const char* defaultGateway = PVP_DUEL_DEFAULT_GATEWAY_URL;
 #else

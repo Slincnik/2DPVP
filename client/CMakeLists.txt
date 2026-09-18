@@ -3,6 +3,10 @@ project(pvp_duel_client LANGUAGES C CXX)
 
 set(PVP_DUEL_DEFAULT_GATEWAY_URL "http://localhost:8080" CACHE STRING
     "Gateway URL embedded as the client default")
+set(PVP_DUEL_VERSION "0.0.0-dev" CACHE STRING
+    "Client version embedded in the binary")
+set(PVP_DUEL_UPDATE_MANIFEST_URL "" CACHE STRING
+    "HTTPS URL of the latest client update manifest")
 
 enable_testing()
 
@@ -105,6 +109,7 @@ endif()
 get_filename_component(MSQUIC_LIBRARY_DIR "${MSQUIC_LIBRARY}" DIRECTORY)
 
 find_package(Protobuf REQUIRED)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 if(APPLE)
     # New Homebrew Protobuf releases emit inline ABSL_DCHECK helpers. The
     # protobuf target does not expose this dependency reliably in all formula
@@ -194,10 +199,18 @@ target_link_libraries(duel_client_app PUBLIC duel_app PRIVATE
 )
 target_compile_options(duel_client_app PRIVATE -Wall -Wextra -Wpedantic)
 
-add_executable(pvp_duel_client app/main.cpp)
-target_link_libraries(pvp_duel_client PRIVATE duel_client_app)
+if(UNIX AND NOT APPLE)
+    add_executable(pvp_duel_updater update/updater.cpp)
+    target_link_libraries(pvp_duel_updater PRIVATE httplib::httplib OpenSSL::Crypto)
+    target_compile_options(pvp_duel_updater PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_executable(pvp_duel_client app/main.cpp update/client_updater.cpp)
+target_link_libraries(pvp_duel_client PRIVATE duel_client_app httplib::httplib nlohmann_json::nlohmann_json)
 target_compile_definitions(pvp_duel_client PRIVATE
     PVP_DUEL_DEFAULT_GATEWAY_URL="${PVP_DUEL_DEFAULT_GATEWAY_URL}"
+    PVP_DUEL_VERSION="${PVP_DUEL_VERSION}"
+    PVP_DUEL_UPDATE_MANIFEST_URL="${PVP_DUEL_UPDATE_MANIFEST_URL}"
 )
 target_compile_options(pvp_duel_client PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(pvp_duel_client PROPERTIES BUILD_RPATH "${MSQUIC_LIBRARY_DIR}")

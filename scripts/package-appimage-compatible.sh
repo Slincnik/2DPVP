@@ -29,6 +29,8 @@ cd "$root"
 docker buildx build \
   --file client/packaging/Dockerfile.appimage \
   --build-arg "GATEWAY_URL=$gateway_url" \
+  --build-arg "PVP_DUEL_VERSION=${PVP_DUEL_VERSION:-0.0.0-dev}" \
+  --build-arg "PVP_DUEL_UPDATE_MANIFEST_URL=${PVP_DUEL_UPDATE_MANIFEST_URL:-}" \
   --output "type=local,dest=$root/dist" \
   .
 

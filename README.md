@@ -15,6 +15,10 @@
 
 Полная целевая схема: [`arch-2d-pvp-duel (1).md`](arch-2d-pvp-duel%20(1).md).
 
+CI и автоматическое обновление Linux-клиента описаны в
+[`docs/client-updates.md`](docs/client-updates.md). Релиз создаётся тегом
+`vX.Y.Z` и публикует AppImage в GitHub Releases.
+
 ## Быстрый старт
 
 ```bash
