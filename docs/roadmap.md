@@ -56,20 +56,23 @@ Backend, C++ клиент и сквозной сценарий двух игро
 
 ### PostgreSQL
 
-- [ ] Добавить таблицу истории матчей.
-- [ ] Хранить участников, победителя, причину завершения и длительность.
-- [ ] Гарантировать идемпотентную запись результата по `match_id`.
+- [x] Добавить таблицу истории матчей.
+- [x] Хранить участников, победителя и причину завершения terminal матча.
+- [x] Гарантировать идемпотентную запись результата по `match_id`.
+- [x] Добавить явную `make migrate` операцию для существующих PostgreSQL volumes.
+- [ ] Автоматизировать migration job в production deployment/CI (до его появления `make migrate` выполняется явно перед Gateway).
+- [ ] Добавить длительность матча в историю (отложено: текущий terminal contract её не передаёт).
 - [ ] Добавить рейтинг/MMR пользователя.
 - [ ] Обновлять рейтинг транзакционно вместе с результатом матча.
 - [ ] Добавить периодическую очистку истёкших refresh tokens.
 
 ### Backend API
 
-- [ ] `GET /api/v1/profile`.
+- [x] `GET /api/v1/profile`.
 - [ ] `GET /api/v1/matches` с cursor pagination.
 - [ ] `GET /api/v1/leaderboard`.
-- [ ] Добавить internal endpoint/RPC для подтверждения результата Match Server.
-- [ ] Не принимать результат матча от игрового клиента.
+- [x] Добавить защищённый internal endpoint для подтверждения результата Match Server.
+- [x] Не принимать результат матча от игрового клиента.
 
 ### Matchmaking
 
@@ -91,7 +94,8 @@ Backend, C++ клиент и сквозной сценарий двух игро
   - [x] Secret Service/libsecret на Linux.
 - [x] Не хранить refresh token открытым текстом.
 - [x] Восстанавливать пользовательскую сессию при старте клиента.
-- [ ] Добавить отдельные экраны профиля, очереди и результата.
+- [x] Добавить экран профиля с async загрузкой и refresh/retry через SessionManager.
+- [ ] Выделить queue/result в самостоятельные Screen implementations (текущий runtime ещё маршрутизирует их централизованно).
 
 ---
 
@@ -226,8 +230,8 @@ Backend, C++ клиент и сквозной сценарий двух игро
 
 P0 завершен; reconnect grace period осознанно отложен до P2.
 
-1. Запись результата в PostgreSQL.
-2. ELO/MMR и profile endpoints.
-3. Автоматический refresh/logout на клиенте.
-4. Проверка сертификата Match Server и HTTPS Gateway.
+1. Добавить cursor-paginated match history и leaderboard только после определения UX данных.
+2. Отдельно принять ELO/MMR design; текущая статистика не меняет matchmaking policy.
+3. Проверка сертификата Match Server и HTTPS Gateway.
+4. Reconnect и ArenaDescriptor/obstacle geometry — отдельные P2 инкременты.
 5. Redis и масштабирование только после устойчивого single-instance MVP.

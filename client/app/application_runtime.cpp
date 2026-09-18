@@ -4,6 +4,7 @@
 #include "api/gateway_client.h"
 #include "auth/secure_storage.h"
 #include "auth/session_manager.h"
+#include "features/profile/profile_service.h"
 #include "game/input/input.h"
 #include "game/match/match_controller.h"
 #include "game/match_lifecycle.h"
@@ -35,6 +36,8 @@ constexpr float kTwoPi = 6.28318530718F;
 
 using AuthResult = duel::api::Result<duel::api::AuthSession>;
 using QueueResult = duel::api::Result<duel::api::QueueStatus>;
+using ProfileResult = duel::api::Result<duel::api::Profile>;
+using LogoutResult = duel::api::Result<bool>;
 
 enum class RuntimeState {
     Login,
@@ -46,7 +49,9 @@ enum class RuntimeState {
     ConnectPending,
     Playing,
     Result,
+    Profile,
     Settings,
+    LogoutPending,
     Error,
 };
 
@@ -125,6 +130,7 @@ int duel::app::Application::Run() {
     duel::api::GatewayClient gateway(gatewayUrl_);
     auto secureStorage = duel::auth::CreateSecureStorage();
     duel::auth::SessionManager sessionManager(gateway, *secureStorage, gatewayUrl_);
+    duel::features::profile::ProfileService profileService(sessionManager);
     std::unique_ptr<duel::net::QuicClient> network;
     duel::game::presentation::MatchPresentation matchPresentation;
     std::unique_ptr<duel::game::match::MatchController> matchController;
@@ -133,6 +139,8 @@ int duel::app::Application::Run() {
     std::future<duel::api::Result<bool>> restoreFuture;
     std::future<QueueResult> queueFuture;
     std::future<bool> connectFuture;
+    std::future<ProfileResult> profileFuture;
+    std::future<LogoutResult> logoutFuture;
     std::future<duel::platform::SettingsLoadResult> settingsLoadFuture;
     std::future<duel::platform::SettingsSaveResult> settingsSaveFuture;
 
@@ -160,6 +168,8 @@ int duel::app::Application::Run() {
     duel::game::MatchmakingCleanup matchmakingCleanup;
     auto nextPoll = std::chrono::steady_clock::now();
     float accumulator = 0.0F;
+    std::optional<duel::api::Profile> profile;
+    std::string profileMessage;
 
     auto beginAuth = [&](bool registration) {
         if (login.empty() || password.empty()) {
@@ -199,6 +209,21 @@ int duel::app::Application::Run() {
         message = join ? "Joining queue..." : "Checking queue...";
     };
 
+    auto beginProfileLoad = [&] {
+        if (!profileFuture.valid()) {
+            profile.reset();
+            profileMessage = "Loading profile...";
+            profileFuture = std::async(std::launch::async, [&] { return profileService.Load(); });
+        }
+        screen = RuntimeState::Profile;
+    };
+
+    auto beginLogout = [&] {
+        logoutFuture = std::async(std::launch::async, [&] { return sessionManager.Logout(); });
+        screen = RuntimeState::LogoutPending;
+        message = "Logging out...";
+    };
+
     auto beginSettingsSave = [&] {
         pendingBindings = settingsDraft;
         const duel::platform::Settings settings{
@@ -213,6 +238,12 @@ int duel::app::Application::Run() {
 
     auto handleQueueResult = [&](QueueResult result) {
         if (!result) {
+            if (!sessionManager.CurrentSession()) {
+                session = {};
+                message = "Your session expired. Please log in again.";
+                screen = RuntimeState::Login;
+                return;
+            }
             message = result.error;
             screen = RuntimeState::Error;
             return;
@@ -271,6 +302,27 @@ int duel::app::Application::Run() {
                 settingsMessage = "Settings save failed: " + result.error;
             }
             pendingBindings.reset();
+        }
+        if (screen == RuntimeState::Profile && FutureReady(profileFuture)) {
+            auto result = profileFuture.get();
+            if (result) {
+                profile = std::move(result.value);
+                profileMessage = "";
+            } else if (!sessionManager.CurrentSession()) {
+                session = {};
+                profile.reset();
+                message = "Your session expired. Please log in again.";
+                screen = RuntimeState::Login;
+            } else {
+                profileMessage = result.error;
+            }
+        }
+        if (screen == RuntimeState::LogoutPending && FutureReady(logoutFuture)) {
+            const auto result = logoutFuture.get();
+            session = {};
+            profile.reset();
+            message = result ? "Logged out" : "Logged out locally: " + result.error;
+            screen = RuntimeState::Login;
         }
         if (screen == RuntimeState::Restoring && FutureReady(restoreFuture)) {
             const auto result = restoreFuture.get();
@@ -400,6 +452,12 @@ int duel::app::Application::Run() {
             } else if (action == screens::ResultAction::FindAnother) {
                 beginQueueRequest(true);
             }
+        } else if (screen == RuntimeState::Profile) {
+            if (screens::DrawProfile(profile ? &*profile : nullptr, profileMessage)
+                == screens::ProfileAction::Back) {
+                screen = RuntimeState::Ready;
+                message = "Ready to find a match";
+            }
         } else if (screen == RuntimeState::Settings) {
             const auto settingsEvent = screens::DrawSettings(
                 settingsDraft,
@@ -445,16 +503,15 @@ int duel::app::Application::Run() {
             );
             if (action == screens::MainMenuAction::FindMatch) {
                 beginQueueRequest(true);
+            } else if (action == screens::MainMenuAction::Profile) {
+                beginProfileLoad();
             } else if (action == screens::MainMenuAction::Settings) {
                 settingsDraft = inputBindings;
                 captureAction.reset();
                 settingsMessage = "Select a control to rebind";
                 screen = RuntimeState::Settings;
             } else if (action == screens::MainMenuAction::Logout) {
-                const auto logout = sessionManager.Logout();
-                session = {};
-                screen = RuntimeState::Login;
-                message = logout ? "Logged out" : "Logged out locally: " + logout.error;
+                beginLogout();
             } else if (action == screens::MainMenuAction::Back) {
                 screen = session.accessToken.empty() ? RuntimeState::Login : RuntimeState::Ready;
                 message = session.accessToken.empty()

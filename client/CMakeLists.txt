@@ -159,7 +159,12 @@ target_include_directories(duel_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(duel_game PUBLIC duel_input)
 target_compile_options(duel_game PRIVATE -Wall -Wextra -Wpedantic)
 
-add_library(duel_api STATIC api/gateway_client.cpp auth/secure_storage.cpp auth/session_manager.cpp)
+add_library(duel_api STATIC
+    api/gateway_client.cpp
+    auth/secure_storage.cpp
+    auth/session_manager.cpp
+    features/profile/profile_service.cpp
+)
 target_include_directories(duel_api PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(duel_api PUBLIC httplib::httplib nlohmann_json::nlohmann_json)
 if(WIN32)
@@ -286,6 +291,11 @@ add_executable(session_manager_test tests/session_manager_test.cpp)
 target_link_libraries(session_manager_test PRIVATE duel_api)
 target_compile_options(session_manager_test PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME session_manager_test COMMAND session_manager_test)
+
+add_executable(profile_service_test tests/profile_service_test.cpp)
+target_link_libraries(profile_service_test PRIVATE duel_api)
+target_compile_options(profile_service_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME profile_service_test COMMAND profile_service_test)
 
 add_executable(match_lifecycle_test tests/match_lifecycle_test.cpp)
 target_link_libraries(match_lifecycle_test PRIVATE duel_game)

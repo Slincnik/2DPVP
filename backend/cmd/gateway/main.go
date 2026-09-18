@@ -13,6 +13,7 @@ import (
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/gateway"
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/matchmaking"
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/matchticket"
+	"github.com/dprishchepa/2d-pvp-duel/backend/internal/profile"
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/storage/postgres"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -65,6 +66,15 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("configure match tickets: %w", err)
 	}
+	profileService, err := profile.NewService(store)
+	if err != nil {
+		return fmt.Errorf("configure profile: %w", err)
+	}
+	internalResultSecret := os.Getenv("INTERNAL_MATCH_RESULT_SECRET")
+	if len(internalResultSecret) < 32 {
+		return errors.New("INTERNAL_MATCH_RESULT_SECRET must contain at least 32 bytes")
+	}
+
 	queue, err := matchmaking.New(
 		ticketManager,
 		envOrDefault("MATCH_SERVER_PUBLIC_ADDR", "localhost:4242"),
@@ -74,7 +84,10 @@ func run() error {
 		return fmt.Errorf("configure matchmaking: %w", err)
 	}
 
-	server := gateway.New(envOrDefault("GATEWAY_ADDR", ":8080"), authService, queue)
+	server := gateway.New(
+		envOrDefault("GATEWAY_ADDR", ":8080"), authService, queue,
+		profileService, []byte(internalResultSecret),
+	)
 	if err := server.ListenAndServe(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}

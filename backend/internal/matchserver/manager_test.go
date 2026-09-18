@@ -101,7 +101,11 @@ func TestMatchBroadcastPublishesDedicatedTerminalEvent(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	match := &match{ctx: ctx, cancel: cancel, players: make(map[string]*playerSession)}
+	reporter := &capturingReporter{results: make(chan TerminalResult, 1)}
+	match := &match{
+		ctx: ctx, cancel: cancel, players: make(map[string]*playerSession),
+		matchID: "match-1", playerAID: "alice", playerBID: "bob", reporter: reporter,
+	}
 	start := &gamev1.MatchStart{}
 	match.players["alice"] = newPlayerSession(match, "alice", start)
 	match.players["bob"] = newPlayerSession(match, "bob", start)
@@ -128,6 +132,54 @@ func TestMatchBroadcastPublishesDedicatedTerminalEvent(t *testing.T) {
 		}
 	}
 	<-done
+	select {
+	case result := <-reporter.results:
+		if result.MatchID != "match-1" || result.WinnerID != "alice" ||
+			result.Reason != gamev1.MatchFinishReason_MATCH_FINISH_REASON_TIME_LIMIT {
+			t.Fatalf("reported terminal result = %+v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal result was not reported")
+	}
+}
+
+func TestMatchTerminalRoomOutcomeWinsOverLaterDisconnect(t *testing.T) {
+	t.Parallel()
+
+	reporter := &capturingReporter{results: make(chan TerminalResult, 1)}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	match := &match{
+		ctx: ctx, cancel: cancel, players: make(map[string]*playerSession), matchID: "terminal-match",
+		playerAID: "alice", playerBID: "bob", reporter: reporter,
+		lastSnapshot: &gamev1.WorldSnapshot{Status: gamev1.MatchStatus_MATCH_STATUS_FINISHED},
+	}
+	start := &gamev1.MatchStart{}
+	match.players["alice"] = newPlayerSession(match, "alice", start)
+	match.players["bob"] = newPlayerSession(match, "bob", start)
+	terminal := &gamev1.MatchEnd{
+		FinalSnapshot:  &gamev1.WorldSnapshot{Status: gamev1.MatchStatus_MATCH_STATUS_FINISHED},
+		WinnerPlayerId: "alice", Reason: gamev1.MatchFinishReason_MATCH_FINISH_REASON_KO,
+	}
+
+	match.finalize(terminal)
+	match.playerDisconnected("alice")
+
+	for _, player := range match.players {
+		matchEnd := <-player.matchEnds
+		if matchEnd.GetReason() != gamev1.MatchFinishReason_MATCH_FINISH_REASON_KO ||
+			matchEnd.GetWinnerPlayerId() != "alice" {
+			t.Fatalf("terminal result was overwritten: %+v", matchEnd)
+		}
+	}
+	select {
+	case result := <-reporter.results:
+		if result.Reason != gamev1.MatchFinishReason_MATCH_FINISH_REASON_KO || result.WinnerID != "alice" {
+			t.Fatalf("reported result was overwritten: %+v", result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("terminal result was not reported")
+	}
 }
 
 func TestMatchDisconnectPublishesTechnicalDefeatAndStopsRoom(t *testing.T) {
@@ -218,6 +270,15 @@ func TestMatchManager_RejectsSamePlayerAsOpponent(t *testing.T) {
 	}
 	cancel()
 	<-first
+}
+
+type capturingReporter struct {
+	results chan TerminalResult
+}
+
+func (r *capturingReporter) Report(_ context.Context, result TerminalResult) error {
+	r.results <- result
+	return nil
 }
 
 func newTicketManager(t *testing.T) *matchticket.Manager {

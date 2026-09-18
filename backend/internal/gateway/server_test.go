@@ -11,6 +11,7 @@ import (
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/auth"
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/matchmaking"
 	"github.com/dprishchepa/2d-pvp-duel/backend/internal/matchticket"
+	"github.com/dprishchepa/2d-pvp-duel/backend/internal/profile"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -173,7 +174,8 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("NewTokenManager() error = %v", err)
 	}
-	service, err := auth.NewService(auth.NewMemoryStore(), manager, bcrypt.MinCost)
+	store := auth.NewMemoryStore()
+	service, err := auth.NewService(store, manager, bcrypt.MinCost)
 	if err != nil {
 		t.Fatalf("NewService() error = %v", err)
 	}
@@ -190,7 +192,11 @@ func newTestServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("matchmaking.New() error = %v", err)
 	}
-	return New("", service, queue)
+	profiles, err := profile.NewService(profile.NewMemoryStore(store))
+	if err != nil {
+		t.Fatalf("profile.NewService() error = %v", err)
+	}
+	return New("", service, queue, profiles, []byte("gateway-internal-result-secret-32-bytes"))
 }
 
 func registerPlayer(t *testing.T, server *Server, login string) authResponse {

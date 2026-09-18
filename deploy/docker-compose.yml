@@ -10,6 +10,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ../backend/migrations/000001_auth.up.sql:/docker-entrypoint-initdb.d/000001_auth.sql:ro
+      - ../backend/migrations/000002_match_results.up.sql:/docker-entrypoint-initdb.d/000002_match_results.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U pvp_duel -d pvp_duel"]
       interval: 2s

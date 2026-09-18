@@ -52,8 +52,16 @@ func run() error {
 		return fmt.Errorf("configure match tickets: %w", err)
 	}
 
+	resultReporter, err := matchserver.NewHTTPResultReporter(
+		envOrDefault("GATEWAY_INTERNAL_URL", "http://localhost:8080"),
+		os.Getenv("INTERNAL_MATCH_RESULT_SECRET"),
+	)
+	if err != nil {
+		return fmt.Errorf("configure result reporter: %w", err)
+	}
+
 	go func() {
-		authenticator := matchserver.NewMatchManager(ticketManager)
+		authenticator := matchserver.NewMatchManager(ticketManager, resultReporter)
 		server := quicserver.New(
 			envOrDefault("MATCHSERVER_QUIC_ADDR", ":4242"),
 			&tls.Config{

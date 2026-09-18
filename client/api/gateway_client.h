@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 
 namespace duel::api {
@@ -15,6 +16,20 @@ enum class QueueState {
     NotQueued,
     Waiting,
     Matched,
+};
+
+struct ProfileStatistics {
+    std::int64_t played = 0;
+    std::int64_t wins = 0;
+    std::int64_t losses = 0;
+    std::int64_t draws = 0;
+};
+
+struct Profile {
+    std::string userId;
+    std::string login;
+    std::string createdAt;
+    ProfileStatistics statistics;
 };
 
 struct QueueStatus {
@@ -45,6 +60,7 @@ public:
     Result<QueueStatus> JoinQueue(const std::string& accessToken) const;
     Result<QueueStatus> QueueStatusFor(const std::string& accessToken) const;
     Result<bool> LeaveQueue(const std::string& accessToken) const;
+    Result<Profile> ProfileFor(const std::string& accessToken) const;
 
 private:
     Result<AuthSession> Authenticate(

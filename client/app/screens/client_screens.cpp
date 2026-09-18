@@ -287,13 +287,16 @@ MainMenuAction DrawMainMenu(
     if (ready && Button(Rectangle{520, 330, 240, 52}, "Find match")) {
         return MainMenuAction::FindMatch;
     }
+    if (ready && Button(Rectangle{520, 400, 240, 52}, "Profile")) {
+        return MainMenuAction::Profile;
+    }
     if (ready && Button(
-            Rectangle{520, 400, 240, 52},
+            Rectangle{520, 470, 240, 52},
             settingsReady ? "Settings" : "Loading settings..."
         ) && settingsReady) {
         return MainMenuAction::Settings;
     }
-    if (ready && Button(Rectangle{520, 470, 240, 52}, "Logout")) {
+    if (ready && Button(Rectangle{520, 540, 240, 52}, "Logout")) {
         return MainMenuAction::Logout;
     }
     if (waiting) {
@@ -303,6 +306,28 @@ MainMenuAction DrawMainMenu(
         return MainMenuAction::Back;
     }
     return MainMenuAction::None;
+}
+
+ProfileAction DrawProfile(const api::Profile* profile, const std::string& message) {
+    DrawText("Profile", 540, 100, 36, RAYWHITE);
+    if (profile == nullptr) {
+        DrawText(message.c_str(), 420, 220, 20, LIGHTGRAY);
+    } else {
+        DrawText(profile->login.c_str(), 440, 190, 28, SKYBLUE);
+        const auto& stats = profile->statistics;
+        const std::string played = "Matches played: " + std::to_string(stats.played);
+        const std::string wins = "Wins: " + std::to_string(stats.wins);
+        const std::string losses = "Losses: " + std::to_string(stats.losses);
+        const std::string draws = "Draws: " + std::to_string(stats.draws);
+        DrawText(played.c_str(), 440, 250, 22, RAYWHITE);
+        DrawText(wins.c_str(), 440, 290, 22, GREEN);
+        DrawText(losses.c_str(), 440, 330, 22, RED);
+        DrawText(draws.c_str(), 440, 370, 22, GOLD);
+        DrawText(message.c_str(), 440, 425, 18, LIGHTGRAY);
+    }
+    return Button(Rectangle{520, 520, 240, 52}, "Back")
+        ? ProfileAction::Back
+        : ProfileAction::None;
 }
 
 SettingsScreenEvent DrawSettings(

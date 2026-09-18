@@ -54,6 +54,32 @@ Result<AuthSession> ParseAuth(const httplib::Result& response) {
     }
 }
 
+Result<Profile> ParseProfile(const httplib::Result& response) {
+    if (!response || response->status < 200 || response->status >= 300) {
+        return {.error = ResponseError(response), .status = response ? response->status : 0};
+    }
+    try {
+        const auto body = Json::parse(response->body);
+        const auto statistics = body.at("statistics");
+        return {
+            .value = Profile{
+                .userId = body.at("id").get<std::string>(),
+                .login = body.at("login").get<std::string>(),
+                .createdAt = body.at("createdAt").get<std::string>(),
+                .statistics = {
+                    .played = statistics.at("played").get<std::int64_t>(),
+                    .wins = statistics.at("wins").get<std::int64_t>(),
+                    .losses = statistics.at("losses").get<std::int64_t>(),
+                    .draws = statistics.at("draws").get<std::int64_t>(),
+                },
+            },
+            .error = {},
+        };
+    } catch (const std::exception& error) {
+        return {.error = "Invalid profile response: " + std::string(error.what()), .status = response->status};
+    }
+}
+
 Result<QueueStatus> ParseQueue(const httplib::Result& response) {
     if (!response || response->status < 200 || response->status >= 300) {
         return {.error = ResponseError(response), .status = response ? response->status : 0};
@@ -137,6 +163,11 @@ Result<bool> GatewayClient::LeaveQueue(const std::string& accessToken) const {
         return {.error = ResponseError(response), .status = response ? response->status : 0};
     }
     return {.value = true, .status = response->status};
+}
+
+Result<Profile> GatewayClient::ProfileFor(const std::string& accessToken) const {
+    auto client = NewClient(baseUrl_);
+    return ParseProfile(client.Get("/api/v1/profile", Bearer(accessToken)));
 }
 
 Result<AuthSession> GatewayClient::Authenticate(

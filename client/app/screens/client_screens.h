@@ -1,5 +1,6 @@
 #pragma once
 
+#include "api/gateway_client.h"
 #include "game/input/input.h"
 #include "game/match/match_model.h"
 #include "game/presentation/match_presentation.h"
@@ -10,7 +11,8 @@
 namespace duel::app::screens {
 
 enum class LoginAction { None, Login, Register };
-enum class MainMenuAction { None, FindMatch, Settings, Logout, Back };
+enum class MainMenuAction { None, FindMatch, Profile, Settings, Logout, Back };
+enum class ProfileAction { None, Back };
 enum class ResultAction { None, BackToMenu, FindAnother };
 enum class SettingsAction { None, Save, ResetDefaults, Back };
 
@@ -35,6 +37,8 @@ MainMenuAction DrawMainMenu(
     bool error,
     bool settingsReady
 );
+
+ProfileAction DrawProfile(const api::Profile* profile, const std::string& message);
 
 SettingsScreenEvent DrawSettings(
     const game::input::InputBindings& bindings,

@@ -21,6 +21,16 @@ int main() {
         }
         response.set_content(R"({"status":"waiting"})", "application/json");
     });
+    server.Get("/api/v1/profile", [](const httplib::Request& request, httplib::Response& response) {
+        if (request.get_header_value("Authorization") != "Bearer access") {
+            response.status = 401;
+            return;
+        }
+        response.set_content(
+            R"({"id":"user-1","login":"alice","createdAt":"2026-09-18T00:00:00Z","statistics":{"played":3,"wins":2,"losses":0,"draws":1}})",
+            "application/json"
+        );
+    });
     server.Get("/api/v1/queue/status", [](const httplib::Request&, httplib::Response& response) {
         response.set_content(
             R"({"status":"matched","matchId":"match-1","opponentId":"user-2","serverAddr":"localhost:4242","matchTicket":"ticket"})",
@@ -40,6 +50,7 @@ int main() {
     const auto auth = client.Login("alice", "correct horse battery");
     const auto waiting = client.JoinQueue(auth.value.accessToken);
     const auto matched = client.QueueStatusFor(auth.value.accessToken);
+    const auto profile = client.ProfileFor(auth.value.accessToken);
 
     server.stop();
     serverThread.join();
@@ -50,6 +61,11 @@ int main() {
     }
     if (!waiting || waiting.value.state != duel::api::QueueState::Waiting) {
         std::cerr << "waiting response was not parsed\n";
+        return 1;
+    }
+    if (!profile || profile.value.userId != "user-1" || profile.value.statistics.played != 3
+        || profile.value.statistics.wins != 2 || profile.value.statistics.draws != 1) {
+        std::cerr << "profile response was not parsed\n";
         return 1;
     }
     if (!matched || matched.value.state != duel::api::QueueState::Matched

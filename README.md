@@ -24,6 +24,7 @@ CI и автоматическое обновление Linux-клиента о�
 ```bash
 make backend-test
 make db-up
+make migrate # обязательная операция перед первым запуском Gateway на существующем volume
 make gateway
 # либо Match Server:
 make dev-cert
@@ -107,9 +108,20 @@ appimage-native`; он также требует libsecret development files и 
 новую glibc. Если в системе недоступен FUSE, AppImage можно запустить с
 `--appimage-extract-and-run`.
 
+Миграции не выполняются Gateway автоматически: до запуска Gateway в каждом
+новом deployment или на существующем PostgreSQL volume нужно выполнить
+`make migrate`. Команда ведёт таблицу `schema_migrations`, поэтому повторный
+запуск безопасен и применяет `000002_match_results` один раз. Для volumes,
+созданных до появления migration ledger, она распознаёт существующие таблицы
+`users`/`match_results` и baseline-ит соответствующие первоначальные миграции,
+не переигрывая их.
+
 Локальный `make gateway` использует development-значения `DATABASE_URL` и
-`JWT_SECRET` из Makefile; в deployment их обязательно нужно переопределить.
-Описание endpoints и модели безопасности: [`docs/auth.md`](docs/auth.md) и
+`JWT_SECRET` из Makefile; для Gateway и Match Server также нужно задать один
+`INTERNAL_MATCH_RESULT_SECRET` не короче 32 байт. Match Server использует
+`GATEWAY_INTERNAL_URL` (по умолчанию `http://localhost:8080`) для защищённой
+передачи terminal match results. В deployment эти значения обязательно нужно
+переопределить. Описание endpoints и модели безопасности: [`docs/auth.md`](docs/auth.md) и
 [`docs/matchmaking.md`](docs/matchmaking.md).
 
 ## Инструменты

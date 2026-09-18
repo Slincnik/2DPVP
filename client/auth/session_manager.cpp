@@ -11,7 +11,6 @@ SessionManager::SessionManager(
 ) : gateway_(gateway), storage_(storage), storageKey_(std::move(storageKey)) {}
 
 api::Result<bool> SessionManager::Restore() {
-    std::lock_guard lock(mutex_);
     const auto stored = storage_.Load(storageKey_);
     if (!stored) {
         return {.error = stored.error};
@@ -19,12 +18,16 @@ api::Result<bool> SessionManager::Restore() {
     if (!stored.value || stored.value->empty()) {
         return {.value = false};
     }
-    session_ = api::AuthSession{.refreshToken = std::move(*stored.value)};
-    std::string error;
-    if (!RefreshLocked(error)) {
-        ClearSessionLocked();
-        return {.error = error};
+
+    const auto refreshed = gateway_.Refresh(api::AuthSession{.refreshToken = std::move(*stored.value)});
+    if (!refreshed) {
+        const auto storageError = storage_.Erase(storageKey_);
+        if (!storageError.empty()) {
+            AddWarning("Could not remove invalid saved session: " + storageError);
+        }
+        return {.error = refreshed.error};
     }
+    SetSession(refreshed.value);
     return {.value = true};
 }
 
@@ -36,8 +39,7 @@ api::Result<api::AuthSession> SessionManager::Login(
     if (!result) {
         return result;
     }
-    std::lock_guard lock(mutex_);
-    SetSessionLocked(result.value);
+    SetSession(result.value);
     return result;
 }
 
@@ -49,23 +51,24 @@ api::Result<api::AuthSession> SessionManager::Register(
     if (!result) {
         return result;
     }
-    std::lock_guard lock(mutex_);
-    SetSessionLocked(result.value);
+    SetSession(result.value);
     return result;
 }
 
 api::Result<bool> SessionManager::Logout() {
-    std::lock_guard lock(mutex_);
+    const auto session = SessionCopy();
+    // Clear memory state first so other use-cases immediately observe logout.
+    ClearSession();
+
     std::string error;
-    if (session_ && !session_->refreshToken.empty()) {
-        const auto result = gateway_.Logout(session_->refreshToken);
+    if (session && !session->refreshToken.empty()) {
+        const auto result = gateway_.Logout(session->refreshToken);
         if (!result) {
             error = result.error;
         }
     }
     // Local credentials must be removed even if the network call failed.
     const auto storageError = storage_.Erase(storageKey_);
-    ClearSessionLocked();
     if (!error.empty()) {
         return {.error = error};
     }
@@ -76,56 +79,92 @@ api::Result<bool> SessionManager::Logout() {
 }
 
 api::Result<api::QueueStatus> SessionManager::JoinQueue() {
-    std::lock_guard lock(mutex_);
-    if (!session_) {
+    const auto session = SessionCopy();
+    if (!session) {
         return {.error = "Not authenticated"};
     }
-    auto result = gateway_.JoinQueue(session_->accessToken);
-    if (result.status == 401) {
-        std::string error;
-        if (!RefreshLocked(error)) {
-            return {.error = error};
-        }
-        result = gateway_.JoinQueue(session_->accessToken);
+    auto result = gateway_.JoinQueue(session->accessToken);
+    if (result.status != 401) {
+        return result;
     }
-    return result;
+    std::string error;
+    if (!RefreshAfterUnauthorized(session->accessToken, error)) {
+        return {.error = error};
+    }
+    const auto refreshed = SessionCopy();
+    if (!refreshed) {
+        return {.error = "Not authenticated"};
+    }
+    return gateway_.JoinQueue(refreshed->accessToken);
 }
 
 api::Result<api::QueueStatus> SessionManager::QueueStatus() {
-    std::lock_guard lock(mutex_);
-    if (!session_) {
+    const auto session = SessionCopy();
+    if (!session) {
         return {.error = "Not authenticated"};
     }
-    auto result = gateway_.QueueStatusFor(session_->accessToken);
-    if (result.status == 401) {
-        std::string error;
-        if (!RefreshLocked(error)) {
-            return {.error = error};
-        }
-        result = gateway_.QueueStatusFor(session_->accessToken);
+    auto result = gateway_.QueueStatusFor(session->accessToken);
+    if (result.status != 401) {
+        return result;
     }
-    return result;
+    std::string error;
+    if (!RefreshAfterUnauthorized(session->accessToken, error)) {
+        return {.error = error};
+    }
+    const auto refreshed = SessionCopy();
+    if (!refreshed) {
+        return {.error = "Not authenticated"};
+    }
+    return gateway_.QueueStatusFor(refreshed->accessToken);
 }
 
 api::Result<bool> SessionManager::LeaveQueue() {
-    std::lock_guard lock(mutex_);
-    if (!session_) {
+    const auto session = SessionCopy();
+    if (!session) {
         return {.error = "Not authenticated"};
     }
-    auto result = gateway_.LeaveQueue(session_->accessToken);
-    if (result.status == 401) {
-        std::string error;
-        if (!RefreshLocked(error)) {
-            return {.error = error};
-        }
-        result = gateway_.LeaveQueue(session_->accessToken);
+    auto result = gateway_.LeaveQueue(session->accessToken);
+    if (result.status != 401) {
+        return result;
     }
-    return result;
+    std::string error;
+    if (!RefreshAfterUnauthorized(session->accessToken, error)) {
+        return {.error = error};
+    }
+    const auto refreshed = SessionCopy();
+    if (!refreshed) {
+        return {.error = "Not authenticated"};
+    }
+    return gateway_.LeaveQueue(refreshed->accessToken);
+}
+
+api::Result<api::Profile> SessionManager::Profile() {
+    const auto session = SessionCopy();
+    if (!session) {
+        return {.error = "Not authenticated"};
+    }
+    auto result = gateway_.ProfileFor(session->accessToken);
+    if (result.status != 401) {
+        return result;
+    }
+    std::string error;
+    if (!RefreshAfterUnauthorized(session->accessToken, error)) {
+        return {.error = error};
+    }
+    const auto refreshed = SessionCopy();
+    if (!refreshed) {
+        return {.error = "Not authenticated"};
+    }
+    return gateway_.ProfileFor(refreshed->accessToken);
+}
+
+std::optional<api::AuthSession> SessionManager::SessionCopy() const {
+    std::lock_guard lock(mutex_);
+    return session_;
 }
 
 std::optional<api::AuthSession> SessionManager::CurrentSession() const {
-    std::lock_guard lock(mutex_);
-    return session_;
+    return SessionCopy();
 }
 
 std::string SessionManager::TakeWarning() {
@@ -133,31 +172,59 @@ std::string SessionManager::TakeWarning() {
     return std::exchange(warning_, {});
 }
 
-bool SessionManager::RefreshLocked(std::string& error) {
-    const auto result = gateway_.Refresh(*session_);
-    if (!result) {
-        error = result.error;
-        const auto storageError = storage_.Erase(storageKey_);
-        if (!storageError.empty()) {
-            warning_ = "Could not remove invalid saved session: " + storageError;
-        }
-        ClearSessionLocked();
+bool SessionManager::RefreshAfterUnauthorized(
+    const std::string& rejectedAccessToken,
+    std::string& error
+) {
+    std::lock_guard refreshLock(refreshMutex_);
+    const auto before = SessionCopy();
+    if (!before) {
+        error = "Not authenticated";
         return false;
     }
-    SetSessionLocked(result.value);
-    return true;
+    // A concurrent request already performed the one permitted refresh.
+    if (before->accessToken != rejectedAccessToken) {
+        return true;
+    }
+
+    const auto result = gateway_.Refresh(*before);
+    if (!result) {
+        const auto stillRejected = SessionCopy();
+        if (stillRejected && stillRejected->accessToken == rejectedAccessToken) {
+            ClearSession();
+            const auto storageError = storage_.Erase(storageKey_);
+            if (!storageError.empty()) {
+                AddWarning("Could not remove invalid saved session: " + storageError);
+            }
+        }
+        error = result.error;
+        return false;
+    }
+
+    const auto stillRejected = SessionCopy();
+    if (stillRejected && stillRejected->accessToken == rejectedAccessToken) {
+        SetSession(result.value);
+    }
+    return CurrentSession().has_value();
 }
 
-void SessionManager::SetSessionLocked(api::AuthSession session) {
+void SessionManager::SetSession(api::AuthSession session) {
     const auto storageError = storage_.Store(storageKey_, session.refreshToken);
     if (!storageError.empty()) {
-        warning_ = "Session will not persist: " + storageError;
+        AddWarning("Session will not persist: " + storageError);
     }
+    std::lock_guard lock(mutex_);
     session_ = std::move(session);
 }
 
-void SessionManager::ClearSessionLocked() {
+void SessionManager::ClearSession() {
+    std::lock_guard lock(mutex_);
     session_.reset();
+}
+
+void SessionManager::AddWarning(std::string warning) {
+    std::lock_guard lock(mutex_);
+    warning_ = std::move(warning);
 }
 
 } // namespace duel::auth

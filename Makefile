@@ -13,6 +13,7 @@ COMPOSE ?= $(shell \
 DATABASE_URL ?= postgres://pvp_duel:local_only_password@localhost:5432/pvp_duel?sslmode=disable
 JWT_SECRET ?= local-development-jwt-secret-change-me-123
 MATCH_TICKET_SECRET ?= local-match-ticket-secret-change-me-123
+INTERNAL_MATCH_RESULT_SECRET ?= local-internal-match-result-secret-change-me-123
 
 BUILD_ENV ?= dev
 DEV_GATEWAY_URL ?= http://localhost:8080
@@ -26,7 +27,7 @@ $(error BUILD_ENV must be dev or prod)
 endif
 
 .PHONY: all help proto client client-test server server-test \
-        backend-build backend-test gateway matchserver smoke-quic \
+        backend-build backend-test migrate gateway matchserver smoke-quic \
         appimage appimage-native setup-msquic dev-cert db-up db-down db-reset clean
 
 all: help
@@ -37,6 +38,7 @@ help:
 	  'make client-test  Build and run C++ tests' \
 	  'make server       Build the Go backend' \
 	  'make server-test  Run Go tests with the race detector' \
+	  'make migrate      Apply ordered PostgreSQL migrations' \
 	  'make gateway      Build and run the Gateway' \
 	  'make matchserver  Build and run the Match Server' \
 	  'make proto        Generate Go and C++ protobuf code' \
@@ -63,14 +65,19 @@ backend-build:
 backend-test:
 	cd backend && go test -race ./...
 
+migrate:
+	cd backend && DATABASE_URL='$(DATABASE_URL)' exec go run ./cmd/migrate
+
 gateway:
 	cd backend && mkdir -p bin && go build -o bin/gateway ./cmd/gateway && \
 		DATABASE_URL='$(DATABASE_URL)' JWT_SECRET='$(JWT_SECRET)' \
-		MATCH_TICKET_SECRET='$(MATCH_TICKET_SECRET)' exec ./bin/gateway
+		MATCH_TICKET_SECRET='$(MATCH_TICKET_SECRET)' \
+		INTERNAL_MATCH_RESULT_SECRET='$(INTERNAL_MATCH_RESULT_SECRET)' exec ./bin/gateway
 
 matchserver:
 	cd backend && mkdir -p bin && go build -o bin/matchserver ./cmd/matchserver && \
-		MATCH_TICKET_SECRET='$(MATCH_TICKET_SECRET)' exec ./bin/matchserver
+		MATCH_TICKET_SECRET='$(MATCH_TICKET_SECRET)' \
+		INTERNAL_MATCH_RESULT_SECRET='$(INTERNAL_MATCH_RESULT_SECRET)' exec ./bin/matchserver
 
 smoke-quic:
 	cd backend && MATCH_TICKET_SECRET='$(MATCH_TICKET_SECRET)' go run ./cmd/smokeclient

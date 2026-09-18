@@ -39,6 +39,7 @@ void WriteAuth(httplib::Response& response, const char* access, const char* refr
 int main() {
     httplib::Server server;
     int joins = 0;
+    int profiles = 0;
     int refreshes = 0;
     server.Post("/api/v1/auth/login", [](const httplib::Request&, httplib::Response& response) {
         WriteAuth(response, "expired-access", "initial-refresh");
@@ -58,6 +59,17 @@ int main() {
             return;
         }
         response.set_content(R"({"status":"waiting"})", "application/json");
+    });
+    server.Get("/api/v1/profile", [&](const httplib::Request& request, httplib::Response& response) {
+        ++profiles;
+        if (request.get_header_value("Authorization") != "Bearer fresh-access") {
+            response.status = 401;
+            return;
+        }
+        response.set_content(
+            R"({"id":"user-1","login":"alice","createdAt":"2026-09-18T00:00:00Z","statistics":{"played":1,"wins":1,"losses":0,"draws":0}})",
+            "application/json"
+        );
     });
     server.Post("/api/v1/auth/logout", [](const httplib::Request& request, httplib::Response& response) {
         if (request.body == R"({"refreshToken":"rotated-refresh"})") {
@@ -79,13 +91,15 @@ int main() {
     MemoryStorage storage;
     duel::auth::SessionManager session(client, storage, "test-gateway");
     const auto login = session.Login("alice", "correct horse battery");
+    const auto profile = session.Profile();
     const auto join = session.JoinQueue();
     const auto logout = session.Logout();
 
     server.stop();
     serverThread.join();
 
-    if (!login || !join || !logout || joins != 2 || refreshes != 1 || storage.value || storage.storeCalls != 2
+    if (!login || !join || !profile || profile.value.statistics.wins != 1 || !logout
+        || joins != 1 || profiles != 2 || refreshes != 1 || storage.value || storage.storeCalls != 2
         || session.CurrentSession()) {
         std::cerr << "session refresh/retry/logout behaviour was incorrect\n";
         return 1;

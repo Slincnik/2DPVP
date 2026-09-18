@@ -27,6 +27,7 @@ type ticketVerifier interface {
 
 type MatchManager struct {
 	verifier ticketVerifier
+	reporter ResultReporter
 	mutex    sync.Mutex
 	waiting  map[string]*waitingPlayer
 	used     map[string]time.Time
@@ -44,9 +45,14 @@ type matchResult struct {
 	err     error
 }
 
-func NewMatchManager(verifier ticketVerifier) *MatchManager {
+func NewMatchManager(verifier ticketVerifier, reporters ...ResultReporter) *MatchManager {
+	var reporter ResultReporter
+	if len(reporters) > 0 {
+		reporter = reporters[0]
+	}
 	return &MatchManager{
 		verifier: verifier,
+		reporter: reporter,
 		waiting:  make(map[string]*waitingPlayer),
 		used:     make(map[string]time.Time),
 	}
@@ -99,7 +105,7 @@ func (m *MatchManager) Authenticate(
 	m.used[claims.MatchID] = claims.ExpiresAt.Time
 	m.mutex.Unlock()
 
-	match, err := newMatch(claims.MatchID, waiting.claims.PlayerID(), playerID)
+	match, err := newMatch(claims.MatchID, waiting.claims.PlayerID(), playerID, m.reporter)
 	if err != nil {
 		select {
 		case waiting.result <- matchResult{err: err}:
@@ -145,11 +151,19 @@ type match struct {
 
 	snapshotMutex sync.Mutex
 	lastSnapshot  *gamev1.WorldSnapshot
-	finishOnce    sync.Once
+	terminalOnce  sync.Once
 	cancelOnce    sync.Once
+	matchID       string
+	playerAID     string
+	playerBID     string
+	reporter      ResultReporter
 }
 
-func newMatch(matchID, playerA, playerB string) (*match, error) {
+func newMatch(matchID, playerA, playerB string, reporters ...ResultReporter) (*match, error) {
+	var reporter ResultReporter
+	if len(reporters) > 0 {
+		reporter = reporters[0]
+	}
 	rules := room.DefaultRuleset()
 	rules.Arena.ID = arenaIDForMatch(matchID)
 	duel, err := room.NewWithRuleset(playerA, playerB, rules)
@@ -166,6 +180,7 @@ func newMatch(matchID, playerA, playerB string) (*match, error) {
 		players:      make(map[string]*playerSession, 2),
 		startBarrier: make(chan struct{}),
 		lastSnapshot: proto.Clone(initialSnapshot).(*gamev1.WorldSnapshot),
+		matchID:      matchID, playerAID: playerA, playerBID: playerB, reporter: reporter,
 	}
 	start := &gamev1.MatchStart{
 		InitialSnapshot:    initialSnapshot,
@@ -220,15 +235,16 @@ func (m *match) broadcast(roomSnapshots <-chan room.Snapshot) {
 	for snapshot := range roomSnapshots {
 		converted := snapshotToProto(snapshot)
 		m.updateLastSnapshot(converted)
-		for _, player := range m.players {
-			publishLatest(player.snapshots, converted)
-		}
 		if snapshot.Status == room.MatchFinished {
-			m.publishMatchEnd(&gamev1.MatchEnd{
+			m.finalize(&gamev1.MatchEnd{
 				FinalSnapshot:  converted,
 				WinnerPlayerId: snapshot.WinnerID,
 				Reason:         finishReasonToProto(snapshot.FinishReason),
 			})
+			continue
+		}
+		for _, player := range m.players {
+			publishLatest(player.snapshots, converted)
 		}
 	}
 }
@@ -270,11 +286,15 @@ func (m *match) lastSnapshotClone() *gamev1.WorldSnapshot {
 	return proto.Clone(m.lastSnapshot).(*gamev1.WorldSnapshot)
 }
 
-func (m *match) publishMatchEnd(matchEnd *gamev1.MatchEnd) {
-	m.finishOnce.Do(func() {
+// finalize chooses the sole terminal outcome for both client delivery and
+// persistence. A concurrent disconnect can no longer publish or report a
+// different result after Room has already ended authoritatively.
+func (m *match) finalize(matchEnd *gamev1.MatchEnd) {
+	m.terminalOnce.Do(func() {
 		for _, player := range m.players {
 			player.matchEnds <- proto.Clone(matchEnd).(*gamev1.MatchEnd)
 		}
+		go m.reportTerminal(matchEnd)
 	})
 }
 
@@ -285,12 +305,25 @@ func (m *match) playerDisconnected(playerID string) {
 	finalSnapshot.WinnerPlayerId = winnerID
 	finalSnapshot.CountdownTicksRemaining = 0
 	finalSnapshot.MatchTicksRemaining = 0
-	m.publishMatchEnd(&gamev1.MatchEnd{
+	matchEnd := &gamev1.MatchEnd{
 		FinalSnapshot:  finalSnapshot,
 		WinnerPlayerId: winnerID,
 		Reason:         gamev1.MatchFinishReason_MATCH_FINISH_REASON_DISCONNECT,
-	})
+	}
+	m.finalize(matchEnd)
 	m.abort()
+}
+
+func (m *match) reportTerminal(matchEnd *gamev1.MatchEnd) {
+	if m.reporter == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	RetryReport(ctx, m.reporter, TerminalResult{
+		MatchID: m.matchID, PlayerAID: m.playerAID, PlayerBID: m.playerBID,
+		WinnerID: matchEnd.GetWinnerPlayerId(), Reason: matchEnd.GetReason(), EndedAt: time.Now().UTC(),
+	})
 }
 
 func (m *match) opponentID(playerID string) string {
