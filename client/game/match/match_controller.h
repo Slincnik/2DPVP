@@ -30,9 +30,12 @@ public:
 private:
     void ApplySnapshot(const protocol::WorldSnapshot& snapshot);
 
+    static constexpr std::uint32_t kLightAttackRepeatIntervalTicks = 15;
+
     MatchTransport& transport_;
     presentation::MatchPresentation& presentation_;
     MatchModel model_;
+    std::uint32_t nextLightAttackTick_ = 0;
 };
 
 } // namespace duel::game::match

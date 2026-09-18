@@ -62,7 +62,7 @@ void TestHeldMovementAndBufferedEdges() {
     InputSampler sampler(bindings);
     FakeInputSource source;
 
-    source.down = {InputCode::KeyW, InputCode::KeyD};
+    source.down = {InputCode::KeyW, InputCode::KeyD, InputCode::Space, InputCode::LeftShift};
     source.pressed = {InputCode::Space, InputCode::LeftShift};
     sampler.Observe(source);
     source.pressed.clear();
@@ -74,11 +74,15 @@ void TestHeldMovementAndBufferedEdges() {
     Require(first.pressed.size() == 2);
     Require(Contains(first.pressed, Action::LightAttack));
     Require(Contains(first.pressed, Action::Dash));
+    Require(Contains(first.held, Action::LightAttack));
+    Require(Contains(first.held, Action::Dash));
 
     const auto second = sampler.ConsumeFixedTick();
     Require(second.moveX == 1);
     Require(second.moveY == -1);
     Require(second.pressed.empty());
+    Require(Contains(second.held, Action::LightAttack));
+    Require(Contains(second.held, Action::Dash));
 }
 
 void TestPendingActionsRepeatUntilAcknowledgedAndStayBounded() {
@@ -110,6 +114,24 @@ void TestPendingActionsRepeatUntilAcknowledgedAndStayBounded() {
     Require(queue.Pending().front().sequence == 1);
 }
 
+void TestReboundLightAttackReportsHeldState() {
+    auto bindings = InputBindings::Defaults();
+    Require(bindings.Rebind(Action::LightAttack, InputCode::KeyE));
+    InputSampler sampler(bindings);
+    FakeInputSource source;
+
+    source.down = {InputCode::Space};
+    sampler.Observe(source);
+    Require(!Contains(sampler.ConsumeFixedTick().held, Action::LightAttack));
+
+    source.down = {InputCode::KeyE};
+    source.pressed = {InputCode::KeyE};
+    sampler.Observe(source);
+    const auto frame = sampler.ConsumeFixedTick();
+    Require(Contains(frame.held, Action::LightAttack));
+    Require(Contains(frame.pressed, Action::LightAttack));
+}
+
 void TestRebindAppliesOnNextObservedFrame() {
     auto bindings = InputBindings::Defaults();
     InputSampler sampler(bindings);
@@ -135,6 +157,7 @@ int main() {
     TestDefaultsAndValidation();
     TestHeldMovementAndBufferedEdges();
     TestPendingActionsRepeatUntilAcknowledgedAndStayBounded();
+    TestReboundLightAttackReportsHeldState();
     TestRebindAppliesOnNextObservedFrame();
     return 0;
 }

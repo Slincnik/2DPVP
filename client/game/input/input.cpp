@@ -160,12 +160,17 @@ void InputSampler::Observe(const InputSource& source) {
     moveY_ = static_cast<std::int8_t>(static_cast<int>(down(Action::MoveDown))
         - static_cast<int>(down(Action::MoveUp)));
 
+    heldActions_.clear();
     for (const auto action : kActions) {
         const auto code = bindings_->InputFor(action);
-        if (!IsEdgeAction(action) || !code || !source.IsPressed(*code)) {
+        if (!IsEdgeAction(action) || !code) {
             continue;
         }
-        if (std::find(pendingPressed_.begin(), pendingPressed_.end(), action) == pendingPressed_.end()) {
+        if (source.IsDown(*code)) {
+            heldActions_.push_back(action);
+        }
+        if (source.IsPressed(*code)
+            && std::find(pendingPressed_.begin(), pendingPressed_.end(), action) == pendingPressed_.end()) {
             pendingPressed_.push_back(action);
         }
     }
@@ -176,6 +181,7 @@ InputFrame InputSampler::ConsumeFixedTick() {
         .moveX = moveX_,
         .moveY = moveY_,
         .pressed = std::move(pendingPressed_),
+        .held = heldActions_,
     };
     pendingPressed_.clear();
     return frame;

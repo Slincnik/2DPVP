@@ -14,6 +14,10 @@ protocol::ActionType ProtocolAction(input::Action action) noexcept {
     }
 }
 
+bool Contains(const std::vector<input::Action>& actions, input::Action action) {
+    return std::find(actions.begin(), actions.end(), action) != actions.end();
+}
+
 } // namespace
 
 MatchController::MatchController(
@@ -53,10 +57,23 @@ bool MatchController::FixedTick(const input::InputFrame& frame) {
         return false;
     }
 
+    ++model_.inputTick_;
+    const bool lightAttackPressed = Contains(frame.pressed, input::Action::LightAttack);
+    const bool lightAttackHeld = Contains(frame.held, input::Action::LightAttack);
+
     for (const auto action : frame.pressed) {
+        if (action == input::Action::LightAttack) {
+            continue;
+        }
         static_cast<void>(model_.pendingActions_.Enqueue(action));
     }
-    ++model_.inputTick_;
+    if ((lightAttackPressed || lightAttackHeld)
+        && model_.inputTick_ >= nextLightAttackTick_
+        && model_.pendingActions_.Enqueue(input::Action::LightAttack)) {
+        // Held input creates another sequence command only after the current
+        // ruleset cooldown cadence. The server still validates every command.
+        nextLightAttackTick_ = model_.inputTick_ + kLightAttackRepeatIntervalTicks;
+    }
     model_.localPrediction_.ApplyInput(model_.inputTick_, frame.moveX, frame.moveY);
 
     protocol::PlayerInput outgoing{

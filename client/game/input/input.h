@@ -63,6 +63,9 @@ struct InputFrame {
     std::int8_t moveX = 0;
     std::int8_t moveY = 0;
     std::vector<Action> pressed;
+    // Current held state for edge actions. Gameplay may use this to schedule
+    // repeat discrete commands without coupling to platform keycodes.
+    std::vector<Action> held;
 };
 
 struct ActionCommand {
@@ -123,6 +126,7 @@ private:
     std::int8_t moveX_ = 0;
     std::int8_t moveY_ = 0;
     std::vector<Action> pendingPressed_;
+    std::vector<Action> heldActions_;
 };
 
 [[nodiscard]] std::string_view ActionName(Action action) noexcept;

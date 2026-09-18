@@ -105,7 +105,7 @@ void TestCommandsRepeatUntilAck() {
     MatchController controller("alice", transport, presentation);
     Start(controller, transport);
 
-    Require(controller.FixedTick(InputFrame{.pressed = {Action::Dash}}));
+    Require(controller.FixedTick(InputFrame{.pressed = {Action::Dash}, .held = {}}));
     Require(transport.sent.back().pendingActions.size() == 1);
     Require(transport.sent.back().pendingActions.front().sequence == 1);
 
@@ -120,19 +120,48 @@ void TestCommandsRepeatUntilAck() {
     Require(controller.Model().PendingActionCount() == 0);
 }
 
+void TestHeldLightAttackRepeatsAtCooldownCadenceUntilAcknowledged() {
+    FakeTransport transport;
+    duel::game::presentation::MatchPresentation presentation;
+    MatchController controller("alice", transport, presentation);
+    Start(controller, transport);
+
+    const auto heldAttack = InputFrame{.pressed = {}, .held = {Action::LightAttack}};
+    Require(controller.FixedTick(heldAttack));
+    Require(transport.sent.back().pendingActions.size() == 1);
+    Require(transport.sent.back().pendingActions.front().sequence == 1);
+    Require(transport.sent.back().pendingActions.front().type == duel::protocol::ActionType::LightAttack);
+
+    for (int tick = 0; tick < 14; ++tick) {
+        Require(controller.FixedTick(heldAttack));
+        Require(transport.sent.back().pendingActions.size() == 1);
+        Require(transport.sent.back().pendingActions.front().sequence == 1);
+    }
+    Require(controller.FixedTick(heldAttack));
+    Require(transport.sent.back().pendingActions.size() == 2);
+    Require(transport.sent.back().pendingActions[0].sequence == 1);
+    Require(transport.sent.back().pendingActions[1].sequence == 2);
+
+    transport.snapshot = ActiveSnapshot(116, Player("alice", 0, 16, 1));
+    static_cast<void>(controller.PollNetwork());
+    Require(controller.FixedTick(InputFrame{}));
+    Require(transport.sent.back().pendingActions.size() == 1);
+    Require(transport.sent.back().pendingActions.front().sequence == 2);
+}
+
 void TestMovementReconciliationReplaysOnlyUnackedInput() {
     FakeTransport transport;
     duel::game::presentation::MatchPresentation presentation;
     MatchController controller("alice", transport, presentation);
     Start(controller, transport);
 
-    Require(controller.FixedTick(InputFrame{.moveX = 1, .pressed = {}}));
+    Require(controller.FixedTick(InputFrame{.moveX = 1, .pressed = {}, .held = {}}));
     Require(controller.Model().LocalPrediction().Position().x == 10);
     transport.snapshot = ActiveSnapshot(101, Player("alice", 8, 1));
     static_cast<void>(controller.PollNetwork());
     Require(controller.Model().LocalPrediction().Position().x == 8);
 
-    Require(controller.FixedTick(InputFrame{.moveX = 1, .pressed = {}}));
+    Require(controller.FixedTick(InputFrame{.moveX = 1, .pressed = {}, .held = {}}));
     transport.snapshot = ActiveSnapshot(102, Player("alice", 8, 1));
     static_cast<void>(controller.PollNetwork());
     Require(controller.Model().LocalPrediction().Position().x == 18);
@@ -158,7 +187,7 @@ void TestDashWaitsForAuthoritativePosition() {
     MatchController controller("alice", transport, presentation);
     Start(controller, transport);
 
-    Require(controller.FixedTick(InputFrame{.pressed = {Action::Dash}}));
+    Require(controller.FixedTick(InputFrame{.pressed = {Action::Dash}, .held = {}}));
     Require(controller.Model().LocalPrediction().Position().x == 0);
 
     auto dashed = Player("alice", 120, 1, 1);
@@ -174,6 +203,7 @@ void TestDashWaitsForAuthoritativePosition() {
 
 int main() {
     TestCommandsRepeatUntilAck();
+    TestHeldLightAttackRepeatsAtCooldownCadenceUntilAcknowledged();
     TestMovementReconciliationReplaysOnlyUnackedInput();
     TestArenaIdIsFixedFromMatchStart();
     TestDashWaitsForAuthoritativePosition();

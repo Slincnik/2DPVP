@@ -143,6 +143,11 @@ type Input struct {
 	Actions []ActionCommand
 }
 
+type actionFacing struct {
+	X int8
+	Y int8
+}
+
 type PlayerState struct {
 	ID                      string
 	PositionX               int32
@@ -173,6 +178,7 @@ type Room struct {
 	players        [2]PlayerState
 	inputs         [2]Input
 	pendingActions [2][]ActionCommand
+	attackFacing   [2]actionFacing
 	nextDashTick   [2]uint32
 	nextAttackTick [2]uint32
 	lastInputTick  [2]uint32
@@ -346,13 +352,22 @@ func (r *Room) applyMovement() {
 		player := &r.players[index]
 		input := r.inputs[index]
 		player.LastAckedInputTick = input.Tick
-		if player.HP <= 0 || (player.ActionState != ActionStateIdle && player.ActionState != ActionStateMove) {
+		if player.HP <= 0 || player.ActionState == ActionStateDash ||
+			player.ActionState == ActionStateHit || player.ActionState == ActionStateKO {
 			continue
 		}
-		player.updateFacing(input)
+
+		// LightAttack phases permit movement, but retain the attack-facing captured
+		// when the command started. This prevents movement input from redirecting
+		// an in-progress hitbox.
+		if player.ActionState == ActionStateIdle || player.ActionState == ActionStateMove {
+			player.updateFacing(input)
+		}
 		player.PositionX = clampPosition(player.PositionX+int32(input.MoveX)*r.rules.MovementPerTick, r.rules.Arena.MinX, r.rules.Arena.MaxX)
 		player.PositionY = clampPosition(player.PositionY+int32(input.MoveY)*r.rules.MovementPerTick, r.rules.Arena.MinY, r.rules.Arena.MaxY)
-		r.setLocomotionState(index)
+		if player.ActionState == ActionStateIdle || player.ActionState == ActionStateMove {
+			r.setLocomotionState(index)
+		}
 	}
 }
 
@@ -406,6 +421,7 @@ func (r *Room) tryLightAttack(index int) {
 		return
 	}
 	player := &r.players[index]
+	r.attackFacing[index] = actionFacing{X: player.FacingX, Y: player.FacingY}
 	player.ActionState = ActionStateLightAttackWindup
 	player.ActionStartedServerTick = r.tick
 	player.ActionTicksRemaining = r.rules.LightAttack.WindupTicks
@@ -421,7 +437,7 @@ func (r *Room) applyActiveAttacks() {
 	for attacker := range r.players {
 		target := 1 - attacker
 		if r.players[attacker].ActionState == ActionStateLightAttackActive &&
-			attackHitboxIntersects(r.players[attacker], r.players[target], r.rules) {
+			attackHitboxIntersects(r.players[attacker], r.players[target], r.attackFacing[attacker], r.rules) {
 			damage[target] += r.rules.LightAttack.Damage
 		}
 	}
@@ -502,15 +518,15 @@ func (player *PlayerState) updateFacing(input Input) {
 	player.FacingX, player.FacingY = 0, input.MoveY
 }
 
-func attackHitboxIntersects(attacker, target PlayerState, rules Ruleset) bool {
+func attackHitboxIntersects(attacker, target PlayerState, facing actionFacing, rules Ruleset) bool {
 	targetMinX, targetMaxX := target.PositionX-rules.PlayerHalfExtent, target.PositionX+rules.PlayerHalfExtent
 	targetMinY, targetMaxY := target.PositionY-rules.PlayerHalfExtent, target.PositionY+rules.PlayerHalfExtent
 	switch {
-	case attacker.FacingX > 0:
+	case facing.X > 0:
 		return rangesOverlap(attacker.PositionX, attacker.PositionX+rules.AttackDepth, targetMinX, targetMaxX) && rangesOverlap(attacker.PositionY-rules.AttackHalfWidth, attacker.PositionY+rules.AttackHalfWidth, targetMinY, targetMaxY)
-	case attacker.FacingX < 0:
+	case facing.X < 0:
 		return rangesOverlap(attacker.PositionX-rules.AttackDepth, attacker.PositionX, targetMinX, targetMaxX) && rangesOverlap(attacker.PositionY-rules.AttackHalfWidth, attacker.PositionY+rules.AttackHalfWidth, targetMinY, targetMaxY)
-	case attacker.FacingY > 0:
+	case facing.Y > 0:
 		return rangesOverlap(attacker.PositionX-rules.AttackHalfWidth, attacker.PositionX+rules.AttackHalfWidth, targetMinX, targetMaxX) && rangesOverlap(attacker.PositionY, attacker.PositionY+rules.AttackDepth, targetMinY, targetMaxY)
 	default:
 		return rangesOverlap(attacker.PositionX-rules.AttackHalfWidth, attacker.PositionX+rules.AttackHalfWidth, targetMinX, targetMaxX) && rangesOverlap(attacker.PositionY-rules.AttackDepth, attacker.PositionY, targetMinY, targetMaxY)

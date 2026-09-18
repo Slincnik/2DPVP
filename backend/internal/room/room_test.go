@@ -94,6 +94,36 @@ func TestLightAttackPhasesHitOnlyWhenActive(t *testing.T) {
 	}
 }
 
+func TestLightAttackMovementKeepsLockedHitboxFacing(t *testing.T) {
+	t.Parallel()
+	duel := newActiveRoom(t)
+	duel.players[0].PositionX, duel.players[0].PositionY = 0, 0
+	// This target would be hit only if movement during windup redirected the
+	// attack downward. A right-facing locked hitbox must miss it.
+	duel.players[1].PositionX, duel.players[1].PositionY = 0, 120
+
+	mustSubmit(t, duel, "alice", actionInput(1, 1, ActionLightAttack))
+	if got := duel.Step().Players[0]; got.ActionState != ActionStateLightAttackWindup {
+		t.Fatalf("attack did not start: %+v", got)
+	}
+	mustSubmit(t, duel, "alice", Input{Tick: 2, MoveY: 1})
+	for range LightAttackWindup {
+		duel.Step()
+	}
+
+	snapshot := duel.Snapshot()
+	attacker := snapshot.Players[0]
+	if attacker.PositionY != int32(LightAttackWindup)*MovementPerTick {
+		t.Fatalf("movement was blocked during attack: %+v", attacker)
+	}
+	if attacker.FacingX != 1 || attacker.FacingY != 0 {
+		t.Fatalf("attack facing changed during windup: %+v", attacker)
+	}
+	if snapshot.Players[1].HP != InitialHP {
+		t.Fatalf("movement redirected attack hitbox: target=%+v", snapshot.Players[1])
+	}
+}
+
 func TestLightAttackCooldownAndForbiddenPhaseAreAcknowledged(t *testing.T) {
 	t.Parallel()
 	duel := newActiveRoom(t)
