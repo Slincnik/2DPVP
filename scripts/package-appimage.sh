@@ -50,7 +50,9 @@ if [[ ! -f "$linuxdeploy" ]] || ! echo "$linuxdeploy_sha256  $linuxdeploy" | sha
 fi
 
 make -C "$root" proto
-cmake -S "$root/client" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release
+cmake -S "$root/client" -B "$build_dir" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DPVP_DUEL_REQUIRE_SECURE_STORAGE=ON
 cmake --build "$build_dir" --target pvp_duel_client --parallel
 
 rm -rf "$app_dir" "$output"

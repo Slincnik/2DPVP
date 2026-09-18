@@ -7,6 +7,9 @@ set(PVP_DUEL_VERSION "0.0.0-dev" CACHE STRING
     "Client version embedded in the binary")
 set(PVP_DUEL_UPDATE_MANIFEST_URL "" CACHE STRING
     "HTTPS URL of the latest client update manifest")
+option(PVP_DUEL_REQUIRE_SECURE_STORAGE
+    "Fail configuration when Linux libsecret development support is unavailable"
+    OFF)
 
 enable_testing()
 
@@ -174,6 +177,10 @@ elseif(UNIX)
     if(LIBSECRET_FOUND)
         target_link_libraries(duel_api PRIVATE PkgConfig::LIBSECRET)
         target_compile_definitions(duel_api PRIVATE PVP_DUEL_HAS_LIBSECRET=1)
+    elseif(PVP_DUEL_REQUIRE_SECURE_STORAGE)
+        message(FATAL_ERROR
+            "Secure credential storage is required, but libsecret-1 development files were not found. "
+            "Install libsecret-1-dev or disable PVP_DUEL_REQUIRE_SECURE_STORAGE.")
     else()
         message(WARNING "libsecret-1 development files not found: persistent login is disabled")
     endif()

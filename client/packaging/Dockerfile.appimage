@@ -11,7 +11,7 @@ ARG LINUXDEPLOY_SHA256=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         binutils build-essential ca-certificates curl dpkg-dev file git \
-        libasound2-dev libgl1-mesa-dev libnuma-dev libprotobuf-dev libssl-dev \
+        libasound2-dev libgl1-mesa-dev libnuma-dev libprotobuf-dev libsecret-1-dev libssl-dev \
         libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxi-dev \
         libxinerama-dev libxrandr-dev ninja-build patchelf pkg-config \
         protobuf-compiler python3-pip && \
@@ -40,6 +40,7 @@ RUN set -eux; \
 
 RUN cmake -S client -B /build -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
+      -DPVP_DUEL_REQUIRE_SECURE_STORAGE=ON \
       -DPVP_DUEL_VERSION="${PVP_DUEL_VERSION:-0.0.0-dev}" \
       -DPVP_DUEL_UPDATE_MANIFEST_URL="${PVP_DUEL_UPDATE_MANIFEST_URL:-}" && \
     cmake --build /build --parallel && \

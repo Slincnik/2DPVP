@@ -94,9 +94,17 @@ chmod +x PvPDuel-x86_64.AppImage
 `GATEWAY_URL`. Основная цель собирает клиент в контейнере Ubuntu 22.04, скачивает закреплённую
 версию `linuxdeploy`, проверяет её SHA-256 и упаковывает динамические
 зависимости. Поэтому AppImage совместим с glibc 2.35 и запускается на Ubuntu
-22.04 и более новых версиях. Для быстрой сборки непосредственно на текущей
-системе существует `make appimage-native`, но такой артефакт может требовать
-более новую glibc. Если в системе недоступен FUSE, AppImage можно запустить с
+22.04 и более новых версиях. Для сохранения refresh token на Linux во время
+сборки требуется `libsecret-1-dev`, а во время запуска — доступный freedesktop
+Secret Service/keyring (например, GNOME Keyring или KWallet). Keyring daemon не
+входит в AppImage: если Secret Service недоступен, вход работает только до
+завершения текущего запуска, а persistence корректно отключается без записи
+credentials в settings или обычный файл.
+
+Для быстрой сборки непосредственно на текущей системе существует `make
+appimage-native`; он также требует libsecret development files и завершает
+конфигурацию с ошибкой при их отсутствии. Такой артефакт может требовать более
+новую glibc. Если в системе недоступен FUSE, AppImage можно запустить с
 `--appimage-extract-and-run`.
 
 Локальный `make gateway` использует development-значения `DATABASE_URL` и
