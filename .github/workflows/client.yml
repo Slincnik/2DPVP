@@ -91,8 +91,24 @@ jobs:
             -x dist/PvPDuel.app/Contents/MacOS/pvp_duel_updater \
             -d dist/PvPDuel.app/Contents/Frameworks \
             -p '@executable_path/../Frameworks'
-          codesign --force --deep --sign - dist/PvPDuel.app
-          codesign --verify --deep --strict dist/PvPDuel.app
+          # dylibbundler modifies the binaries, so signing must happen afterward.
+          # Sign nested libraries first, then the executables, then the app bundle.
+          find dist/PvPDuel.app/Contents/Frameworks \
+            -type f \
+            \( -name '*.dylib' -o -perm -111 \) \
+            -exec codesign --force --sign - --timestamp=none {} \;
+
+          codesign --force --sign - --timestamp=none \
+            dist/PvPDuel.app/Contents/MacOS/pvp_duel_updater
+
+          codesign --force --sign - --timestamp=none \
+            dist/PvPDuel.app/Contents/MacOS/PvPDuel
+
+          codesign --force --sign - --timestamp=none \
+            dist/PvPDuel.app
+
+          codesign --verify --strict --verbose=4 \
+            dist/PvPDuel.app
           test -f "dist/PvPDuel.app/Contents/Frameworks/$protobuf_name"
           ! grep -q '/opt/homebrew' < <(otool -L dist/PvPDuel.app/Contents/MacOS/PvPDuel)
           ditto -c -k --sequesterRsrc --keepParent dist/PvPDuel.app dist/PvPDuel-macos-arm64.zip
