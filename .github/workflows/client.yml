@@ -74,6 +74,15 @@ jobs:
           </dict></plist>
           PLIST
           mkdir -p dist/PvPDuel.app/Contents/Frameworks
+          protobuf_lib="$(find "$(brew --prefix protobuf)/lib" -maxdepth 1 -type f -name 'libprotobuf.*.dylib' -print -quit)"
+          test -n "$protobuf_lib"
+          protobuf_name="$(basename "$protobuf_lib")"
+          cp -L "$protobuf_lib" "dist/PvPDuel.app/Contents/Frameworks/$protobuf_name"
+          protobuf_reference="$(otool -L dist/PvPDuel.app/Contents/MacOS/PvPDuel | awk '/libprotobuf\./ {print $1; exit}')"
+          test -n "$protobuf_reference"
+          install_name_tool -change "$protobuf_reference" \
+            "@executable_path/../Frameworks/$protobuf_name" \
+            dist/PvPDuel.app/Contents/MacOS/PvPDuel
           dylibbundler -od -b \
             -x dist/PvPDuel.app/Contents/MacOS/PvPDuel \
             -d dist/PvPDuel.app/Contents/Frameworks \
@@ -84,6 +93,7 @@ jobs:
             -p '@executable_path/../Frameworks'
           codesign --force --deep --sign - dist/PvPDuel.app
           codesign --verify --deep --strict dist/PvPDuel.app
+          test -f "dist/PvPDuel.app/Contents/Frameworks/$protobuf_name"
           ! otool -L dist/PvPDuel.app/Contents/MacOS/PvPDuel | grep -q '/opt/homebrew'
           ditto -c -k --sequesterRsrc --keepParent dist/PvPDuel.app dist/PvPDuel-macos-arm64.zip
           shasum -a 256 dist/PvPDuel-macos-arm64.zip > dist/PvPDuel-macos-arm64.zip.sha256
