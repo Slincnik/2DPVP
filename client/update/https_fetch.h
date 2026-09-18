@@ -68,7 +68,9 @@ struct FetchResult {
         const bool redirectResponse = response->status == 301 || response->status == 302
             || response->status == 303 || response->status == 307 || response->status == 308;
         if (!redirectResponse) {
-            return {.error = "HTTPS request returned an unexpected status"};
+            return {
+                .error = "HTTPS request returned status " + std::to_string(response->status),
+            };
         }
         if (redirect == kMaximumRedirects) {
             return {.error = "HTTPS redirect limit exceeded"};
