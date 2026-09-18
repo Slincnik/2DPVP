@@ -94,7 +94,7 @@ jobs:
           codesign --force --deep --sign - dist/PvPDuel.app
           codesign --verify --deep --strict dist/PvPDuel.app
           test -f "dist/PvPDuel.app/Contents/Frameworks/$protobuf_name"
-          ! otool -L dist/PvPDuel.app/Contents/MacOS/PvPDuel | grep -q '/opt/homebrew'
+          ! grep -q '/opt/homebrew' < <(otool -L dist/PvPDuel.app/Contents/MacOS/PvPDuel)
           ditto -c -k --sequesterRsrc --keepParent dist/PvPDuel.app dist/PvPDuel-macos-arm64.zip
           shasum -a 256 dist/PvPDuel-macos-arm64.zip > dist/PvPDuel-macos-arm64.zip.sha256
 
