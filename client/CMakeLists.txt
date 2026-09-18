@@ -139,6 +139,7 @@ target_link_libraries(duel_settings PUBLIC duel_input PRIVATE nlohmann_json::nlo
 target_compile_options(duel_settings PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(duel_game STATIC
+    game/arena/arena_catalog.cpp
     game/prediction.cpp
     game/interpolation.cpp
     game/match_lifecycle.cpp
@@ -218,6 +219,16 @@ add_executable(settings_store_test tests/settings_store_test.cpp)
 target_link_libraries(settings_store_test PRIVATE duel_settings)
 target_compile_options(settings_store_test PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME settings_store_test COMMAND settings_store_test)
+
+add_executable(arena_catalog_test tests/arena_catalog_test.cpp)
+target_link_libraries(arena_catalog_test PRIVATE duel_game)
+target_compile_options(arena_catalog_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME arena_catalog_test COMMAND arena_catalog_test)
+
+add_executable(match_protocol_adapter_test tests/match_protocol_adapter_test.cpp)
+target_link_libraries(match_protocol_adapter_test PRIVATE duel_match_protocol duel_protocol)
+target_compile_options(match_protocol_adapter_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME match_protocol_adapter_test COMMAND match_protocol_adapter_test)
 
 add_executable(match_controller_test tests/match_controller_test.cpp)
 target_link_libraries(match_controller_test PRIVATE duel_game)

@@ -28,6 +28,9 @@ NetworkUpdate MatchController::PollNetwork() {
     NetworkUpdate update;
     if (auto start = transport_.PollMatchStart()) {
         model_.tickRate_ = start->tickRate == 0 ? 30 : start->tickRate;
+        model_.arenaId_ = !start->arenaId.empty()
+            ? start->arenaId
+            : start->initialSnapshot.arenaId;
         model_.started_ = true;
         ApplySnapshot(start->initialSnapshot);
         update.started = true;
@@ -97,8 +100,14 @@ void MatchController::ApplySnapshot(const protocol::WorldSnapshot& snapshot) {
             );
         }
     }
+    if (model_.arenaId_.empty() && !snapshot.arenaId.empty()) {
+        model_.arenaId_ = snapshot.arenaId;
+    }
     presentation_.ApplySnapshot(snapshot);
     model_.world_ = snapshot;
+    // Arena selection is immutable for a match. Missing or inconsistent later
+    // metadata cannot switch presentation or affect prediction geometry.
+    model_.world_.arenaId = model_.arenaId_;
 }
 
 } // namespace duel::game::match

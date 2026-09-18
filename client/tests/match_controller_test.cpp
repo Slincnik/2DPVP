@@ -76,9 +76,11 @@ duel::protocol::PlayerState Player(
 
 duel::protocol::WorldSnapshot ActiveSnapshot(
     std::uint32_t tick,
-    duel::protocol::PlayerState local
+    duel::protocol::PlayerState local,
+    std::string arenaId = "neon_rooftop"
 ) {
     return duel::protocol::WorldSnapshot{
+        .arenaId = std::move(arenaId),
         .serverTick = tick,
         .players = {std::move(local), Player("bob", 250)},
         .status = MatchStatus::Active,
@@ -91,6 +93,7 @@ duel::protocol::WorldSnapshot ActiveSnapshot(
 void Start(MatchController& controller, FakeTransport& transport) {
     transport.start = duel::protocol::MatchStart{
         .initialSnapshot = ActiveSnapshot(100, Player("alice", 0)),
+        .arenaId = "neon_rooftop",
         .tickRate = 30,
     };
     Require(controller.PollNetwork().started);
@@ -135,6 +138,20 @@ void TestMovementReconciliationReplaysOnlyUnackedInput() {
     Require(controller.Model().LocalPrediction().Position().x == 18);
 }
 
+void TestArenaIdIsFixedFromMatchStart() {
+    FakeTransport transport;
+    duel::game::presentation::MatchPresentation presentation;
+    MatchController controller("alice", transport, presentation);
+    Start(controller, transport);
+    Require(controller.Model().ArenaId() == "neon_rooftop");
+    Require(controller.Model().World().arenaId == "neon_rooftop");
+
+    transport.snapshot = ActiveSnapshot(101, Player("alice", 0), "future_arena");
+    static_cast<void>(controller.PollNetwork());
+    Require(controller.Model().ArenaId() == "neon_rooftop");
+    Require(controller.Model().World().arenaId == "neon_rooftop");
+}
+
 void TestDashWaitsForAuthoritativePosition() {
     FakeTransport transport;
     duel::game::presentation::MatchPresentation presentation;
@@ -158,6 +175,7 @@ void TestDashWaitsForAuthoritativePosition() {
 int main() {
     TestCommandsRepeatUntilAck();
     TestMovementReconciliationReplaysOnlyUnackedInput();
+    TestArenaIdIsFixedFromMatchStart();
     TestDashWaitsForAuthoritativePosition();
     return 0;
 }

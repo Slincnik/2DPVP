@@ -92,6 +92,7 @@ PlayerState FromProtobuf(const ::game::v1::PlayerState& player) {
 
 WorldSnapshot FromProtobuf(const ::game::v1::WorldSnapshot& snapshot) {
     WorldSnapshot result{
+        .arenaId = snapshot.arena_id(),
         .serverTick = snapshot.server_tick(),
         .players = {},
         .status = FromProtobuf(snapshot.status()),
@@ -109,6 +110,7 @@ WorldSnapshot FromProtobuf(const ::game::v1::WorldSnapshot& snapshot) {
 MatchStart FromProtobuf(const ::game::v1::MatchStart& start) {
     return MatchStart{
         .initialSnapshot = FromProtobuf(start.initial_snapshot()),
+        .arenaId = start.arena_id(),
         .tickRate = start.tick_rate(),
         .countdownTicks = start.countdown_ticks(),
         .matchDurationTicks = start.match_duration_ticks(),

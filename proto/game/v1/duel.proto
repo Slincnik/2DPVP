@@ -75,6 +75,7 @@ message WorldSnapshot {
   string winner_player_id = 4;
   uint32 countdown_ticks_remaining = 5;
   uint32 match_ticks_remaining = 6;
+  string arena_id = 7;
 }
 
 message ClientEnvelope {
@@ -101,6 +102,7 @@ message MatchStart {
   uint32 tick_rate = 2;
   uint32 countdown_ticks = 3;
   uint32 match_duration_ticks = 4;
+  string arena_id = 5;
 }
 
 message MatchEnd {

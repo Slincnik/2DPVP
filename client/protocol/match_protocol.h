@@ -64,6 +64,7 @@ struct PlayerState {
 };
 
 struct WorldSnapshot {
+    std::string arenaId;
     std::uint32_t serverTick = 0;
     std::vector<PlayerState> players;
     MatchStatus status = MatchStatus::Waiting;
@@ -74,6 +75,7 @@ struct WorldSnapshot {
 
 struct MatchStart {
     WorldSnapshot initialSnapshot;
+    std::string arenaId;
     std::uint32_t tickRate = 0;
     std::uint32_t countdownTicks = 0;
     std::uint32_t matchDurationTicks = 0;

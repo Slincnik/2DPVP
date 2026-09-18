@@ -34,6 +34,9 @@ const (
 
 	PlayerASpawnX = -250
 	PlayerBSpawnX = 250
+
+	ArenaIDNeonRooftop  = "neon_rooftop"
+	ArenaIDEmberFoundry = "ember_foundry"
 )
 
 var (
@@ -43,6 +46,7 @@ var (
 )
 
 type ArenaDefinition struct {
+	ID         string
 	MinX, MaxX int32
 	MinY, MaxY int32
 	SpawnAX    int32
@@ -80,7 +84,8 @@ func DefaultRuleset() Ruleset {
 		InitialHP: InitialHP, MovementPerTick: MovementPerTick,
 		AttackDepth: AttackHitboxDepth, AttackHalfWidth: AttackHitboxHalfWidth,
 		PlayerHalfExtent: PlayerHitboxHalfExtent,
-		Arena: ArenaDefinition{MinX: ArenaMinX, MaxX: ArenaMaxX, MinY: ArenaMinY, MaxY: ArenaMaxY,
+		Arena: ArenaDefinition{ID: ArenaIDNeonRooftop,
+			MinX: ArenaMinX, MaxX: ArenaMaxX, MinY: ArenaMinY, MaxY: ArenaMaxY,
 			SpawnAX: PlayerASpawnX, SpawnBX: PlayerBSpawnX},
 		Dash: ActionDefinition{CooldownTicks: DashCooldown, DashDistance: DashDistance},
 		LightAttack: ActionDefinition{CooldownTicks: LightAttackCooldown, WindupTicks: LightAttackWindup,
@@ -153,6 +158,7 @@ type PlayerState struct {
 }
 
 type Snapshot struct {
+	ArenaID                 string
 	ServerTick              uint32
 	Players                 [2]PlayerState
 	Status                  MatchStatus
@@ -187,7 +193,8 @@ func NewWithRuleset(playerA, playerB string, rules Ruleset) (*Room, error) {
 	}
 	if rules.TickRate == 0 || rules.CountdownTicks == 0 || rules.MatchDurationTicks == 0 ||
 		rules.InitialHP <= 0 || rules.MovementPerTick < 0 || rules.LightAttack.ActiveTicks == 0 ||
-		rules.LightAttack.Damage < 0 || rules.Arena.MinX >= rules.Arena.MaxX || rules.Arena.MinY >= rules.Arena.MaxY {
+		rules.LightAttack.Damage < 0 || rules.Arena.ID == "" ||
+		rules.Arena.MinX >= rules.Arena.MaxX || rules.Arena.MinY >= rules.Arena.MaxY {
 		return nil, ErrInvalidRuleset
 	}
 
@@ -284,7 +291,8 @@ func (r *Room) Step() Snapshot {
 }
 
 func (r *Room) Snapshot() Snapshot {
-	snapshot := Snapshot{ServerTick: r.tick, Players: r.players, Status: r.status,
+	snapshot := Snapshot{ArenaID: r.rules.Arena.ID, ServerTick: r.tick,
+		Players: r.players, Status: r.status,
 		WinnerID: r.winnerID, FinishReason: r.finishReason}
 	if r.status == MatchCountdown && r.tick < r.rules.CountdownTicks {
 		snapshot.CountdownTicksRemaining = r.rules.CountdownTicks - r.tick

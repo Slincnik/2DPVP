@@ -1,5 +1,6 @@
 #include "app/screens/client_screens.h"
 
+#include "game/arena/arena_catalog.h"
 #include "game/match_lifecycle.h"
 
 #include "raylib.h"
@@ -66,9 +67,71 @@ Vector2 ScreenPosition(const protocol::PlayerState& player) {
     };
 }
 
+Color ToColor(game::arena::RgbColor color, unsigned char alpha = 255) {
+    return Color{color.red, color.green, color.blue, alpha};
+}
+
 Color WithAlpha(Color color, float alpha) {
     color.a = static_cast<unsigned char>(std::clamp(alpha, 0.0F, 255.0F));
     return color;
+}
+
+void DrawArenaScene(const game::arena::ArenaSelection& selection) {
+    const auto& scene = selection.scene;
+    DrawRectangleGradientV(
+        0,
+        0,
+        GetScreenWidth(),
+        GetScreenHeight(),
+        ToColor(scene.palette.backgroundTop),
+        ToColor(scene.palette.backgroundBottom)
+    );
+
+    for (const auto& decoration : scene.decorations) {
+        const auto accent = ToColor(scene.palette.accent, 145);
+        switch (decoration.kind) {
+        case game::arena::DecorationKind::Skyline:
+            DrawRectangle(
+                static_cast<int>(decoration.x - decoration.size / 2.0F),
+                static_cast<int>(decoration.y - decoration.size),
+                static_cast<int>(decoration.size),
+                static_cast<int>(decoration.size),
+                ToColor(scene.palette.floor, 190)
+            );
+            break;
+        case game::arena::DecorationKind::LightColumn:
+            DrawLineEx(
+                Vector2{decoration.x, decoration.y},
+                Vector2{decoration.x, decoration.y + decoration.size},
+                5.0F,
+                accent
+            );
+            break;
+        case game::arena::DecorationKind::EmberVent:
+            DrawCircleV(Vector2{decoration.x, decoration.y}, decoration.size, accent);
+            DrawCircleLines(
+                static_cast<int>(decoration.x),
+                static_cast<int>(decoration.y),
+                decoration.size + 9.0F,
+                ToColor(scene.palette.border, 180)
+            );
+            break;
+        }
+    }
+
+    const Rectangle bounds{
+        scene.visualBounds.x,
+        scene.visualBounds.y,
+        scene.visualBounds.width,
+        scene.visualBounds.height,
+    };
+    DrawRectangleRec(bounds, ToColor(scene.palette.floor, 225));
+    DrawRectangleLinesEx(bounds, 2.0F, ToColor(scene.palette.border));
+    DrawText(scene.displayName.c_str(), static_cast<int>(bounds.x), 116, 18,
+        ToColor(scene.palette.accent));
+    if (selection.usedFallback) {
+        DrawText("Unknown arena: using safe visual fallback", 430, 688, 16, LIGHTGRAY);
+    }
 }
 
 Vector2 FacingDirection(const protocol::PlayerState& player) {
@@ -283,7 +346,9 @@ void DrawMatch(
     const game::input::InputBindings& bindings
 ) {
     const auto& world = model.World();
-    DrawRectangleLines(290, 150, 700, 420, GRAY);
+    static const game::arena::ArenaCatalog arenaCatalog;
+    const auto arena = arenaCatalog.Resolve(model.ArenaId());
+    DrawArenaScene(arena);
     const auto attack = bindings.InputFor(game::input::Action::LightAttack);
     const auto dash = bindings.InputFor(game::input::Action::Dash);
     const auto inputName = [](std::optional<game::input::InputCode> input) {

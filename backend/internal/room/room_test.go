@@ -17,6 +17,11 @@ func TestNewRejectsInvalidPlayersAndRuleset(t *testing.T) {
 	if _, err := NewWithRuleset("alice", "bob", rules); !errors.Is(err, ErrInvalidRuleset) {
 		t.Fatalf("NewWithRuleset error = %v, want ErrInvalidRuleset", err)
 	}
+	rules = DefaultRuleset()
+	rules.Arena.ID = ""
+	if _, err := NewWithRuleset("alice", "bob", rules); !errors.Is(err, ErrInvalidRuleset) {
+		t.Fatalf("empty arena ID error = %v, want ErrInvalidRuleset", err)
+	}
 }
 
 func TestRoomUsesImmutableRulesetCopy(t *testing.T) {
@@ -27,10 +32,15 @@ func TestRoomUsesImmutableRulesetCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	rules.MovementPerTick = 999
+	rules.Arena.ID = ArenaIDEmberFoundry
 	activeRoom(t, duel)
 	mustSubmit(t, duel, "alice", Input{Tick: 1, MoveX: 1})
-	if got := duel.Step().Players[0].PositionX; got != PlayerASpawnX+MovementPerTick {
+	snapshot := duel.Step()
+	if got := snapshot.Players[0].PositionX; got != PlayerASpawnX+MovementPerTick {
 		t.Fatalf("position = %d", got)
+	}
+	if snapshot.ArenaID != ArenaIDNeonRooftop {
+		t.Fatalf("arena ID changed with caller ruleset: %q", snapshot.ArenaID)
 	}
 }
 

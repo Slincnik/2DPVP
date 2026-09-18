@@ -40,6 +40,19 @@ loss не требует восстановления visual event history: но
 версионированные geometry/ruleset параметры, поэтому локальная dash prediction
 до появления такого контракта намеренно отключена.
 
+## Visual arena metadata
+
+`MatchStart.arena_id` и `WorldSnapshot.arena_id` фиксируют визуальную тему на
+весь матч. Сейчас сервер детерминированно выбирает `neon_rooftop` или
+`ember_foundry`; обе темы используют одну и ту же authoritative прямоугольную
+геометрию и отличаются только palette/background/decor/music metadata клиента.
+`MatchStart.arena_id` совпадает с ID начального и последующих snapshots.
+
+Поля добавлены wire-compatible, поэтому ALPN остаётся `pvp-duel-v2`. Клиент,
+который получает пустой (от старого v2 сервера) или неизвестный ID, использует
+контролируемый default visual fallback. Fallback не меняет collision/prediction
+geometry. Препятствия и `ArenaDescriptor` в эту версию протокола не входят.
+
 ## Framing reliable stream
 
 Каждое protobuf-сообщение имеет префикс из четырёх байт: размер payload как

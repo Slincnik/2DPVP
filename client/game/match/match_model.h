@@ -20,6 +20,7 @@ public:
     [[nodiscard]] const std::string& LocalPlayerId() const noexcept;
     [[nodiscard]] const protocol::WorldSnapshot& World() const noexcept;
     [[nodiscard]] const std::optional<protocol::MatchEnd>& End() const noexcept;
+    [[nodiscard]] const std::string& ArenaId() const noexcept;
     [[nodiscard]] std::uint32_t TickRate() const noexcept;
     [[nodiscard]] bool Started() const noexcept;
     [[nodiscard]] const Prediction& LocalPrediction() const noexcept;
@@ -32,6 +33,7 @@ private:
     std::string localPlayerId_;
     protocol::WorldSnapshot world_;
     std::optional<protocol::MatchEnd> end_;
+    std::string arenaId_;
     std::uint32_t tickRate_ = 30;
     bool started_ = false;
     std::uint32_t inputTick_ = 0;

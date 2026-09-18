@@ -3,6 +3,7 @@ package matchserver
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime"
 	"testing"
 	"time"
@@ -54,6 +55,9 @@ func TestMatchManager_PairsPlayersWithReliableStartAndSharedCountdown(t *testing
 			t.Errorf("start timing = rate %d countdown %d duration %d", start.GetTickRate(), start.GetCountdownTicks(), start.GetMatchDurationTicks())
 		}
 		initial := start.GetInitialSnapshot()
+		if start.GetArenaId() == "" || start.GetArenaId() != initial.GetArenaId() {
+			t.Errorf("arena metadata mismatch: start=%q snapshot=%q", start.GetArenaId(), initial.GetArenaId())
+		}
 		if initial.GetStatus() != gamev1.MatchStatus_MATCH_STATUS_COUNTDOWN {
 			t.Errorf("initial status = %v, want countdown", initial.GetStatus())
 		}
@@ -84,6 +88,11 @@ func TestMatchManager_PairsPlayersWithReliableStartAndSharedCountdown(t *testing
 	bobSnapshot := receiveSnapshot(t, bob)
 	if aliceSnapshot.GetStatus() != gamev1.MatchStatus_MATCH_STATUS_COUNTDOWN || bobSnapshot.GetStatus() != gamev1.MatchStatus_MATCH_STATUS_COUNTDOWN {
 		t.Errorf("paired sessions did not share countdown snapshots")
+	}
+	if aliceSnapshot.GetArenaId() == "" || aliceSnapshot.GetArenaId() != bobSnapshot.GetArenaId() ||
+		aliceSnapshot.GetArenaId() != alice.MatchStart().GetArenaId() {
+		t.Errorf("arena was not fixed for both sessions: alice=%q bob=%q start=%q",
+			aliceSnapshot.GetArenaId(), bobSnapshot.GetArenaId(), alice.MatchStart().GetArenaId())
 	}
 }
 
@@ -124,7 +133,7 @@ func TestMatchBroadcastPublishesDedicatedTerminalEvent(t *testing.T) {
 func TestMatchDisconnectPublishesTechnicalDefeatAndStopsRoom(t *testing.T) {
 	t.Parallel()
 
-	match, err := newMatch("alice", "bob")
+	match, err := newMatch("disconnect-match", "alice", "bob")
 	if err != nil {
 		t.Fatalf("newMatch() error = %v", err)
 	}
@@ -149,6 +158,27 @@ func TestMatchDisconnectPublishesTechnicalDefeatAndStopsRoom(t *testing.T) {
 	case <-match.ctx.Done():
 	case <-time.After(time.Second):
 		t.Fatal("match room was not canceled after disconnect")
+	}
+}
+
+func TestArenaSelectionIsDeterministicAndUsesBothVisualThemes(t *testing.T) {
+	t.Parallel()
+
+	seen := make(map[string]bool)
+	for index := 0; index < 100; index++ {
+		matchID := fmt.Sprintf("arena-match-%d", index)
+		first := arenaIDForMatch(matchID)
+		second := arenaIDForMatch(matchID)
+		if first != second {
+			t.Fatalf("arena selection changed for %q: %q then %q", matchID, first, second)
+		}
+		if first != room.ArenaIDNeonRooftop && first != room.ArenaIDEmberFoundry {
+			t.Fatalf("unsupported arena selected: %q", first)
+		}
+		seen[first] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("selection did not reach both visual themes: %v", seen)
 	}
 }
 

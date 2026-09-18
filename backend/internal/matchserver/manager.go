@@ -99,7 +99,7 @@ func (m *MatchManager) Authenticate(
 	m.used[claims.MatchID] = claims.ExpiresAt.Time
 	m.mutex.Unlock()
 
-	match, err := newMatch(waiting.claims.PlayerID(), playerID)
+	match, err := newMatch(claims.MatchID, waiting.claims.PlayerID(), playerID)
 	if err != nil {
 		select {
 		case waiting.result <- matchResult{err: err}:
@@ -149,8 +149,10 @@ type match struct {
 	cancelOnce    sync.Once
 }
 
-func newMatch(playerA, playerB string) (*match, error) {
-	duel, err := room.New(playerA, playerB)
+func newMatch(matchID, playerA, playerB string) (*match, error) {
+	rules := room.DefaultRuleset()
+	rules.Arena.ID = arenaIDForMatch(matchID)
+	duel, err := room.NewWithRuleset(playerA, playerB, rules)
 	if err != nil {
 		return nil, err
 	}
@@ -170,6 +172,7 @@ func newMatch(playerA, playerB string) (*match, error) {
 		TickRate:           room.TickRate,
 		CountdownTicks:     room.CountdownTicks,
 		MatchDurationTicks: room.MatchDurationTicks,
+		ArenaId:            initialSnapshot.GetArenaId(),
 	}
 	m.players[playerA] = newPlayerSession(m, playerA, start)
 	m.players[playerB] = newPlayerSession(m, playerB, start)
@@ -186,6 +189,20 @@ func newMatch(playerA, playerB string) (*match, error) {
 	}()
 	go m.broadcast(roomSnapshots)
 	return m, nil
+}
+
+func arenaIDForMatch(matchID string) string {
+	// FNV-1a is intentionally implemented inline so selection is stable across
+	// processes and Go versions. Arena choice is visual only in this rollout.
+	var hash uint32 = 2166136261
+	for index := 0; index < len(matchID); index++ {
+		hash ^= uint32(matchID[index])
+		hash *= 16777619
+	}
+	if hash%2 == 0 {
+		return room.ArenaIDNeonRooftop
+	}
+	return room.ArenaIDEmberFoundry
 }
 
 func (m *match) session(playerID string) quicserver.Session {
@@ -389,6 +406,7 @@ func snapshotToProto(snapshot room.Snapshot) *gamev1.WorldSnapshot {
 		status = gamev1.MatchStatus_MATCH_STATUS_COUNTDOWN
 	}
 	return &gamev1.WorldSnapshot{
+		ArenaId:                 snapshot.ArenaID,
 		ServerTick:              snapshot.ServerTick,
 		Players:                 players,
 		Status:                  status,
