@@ -83,13 +83,14 @@ jobs:
           main="$app/Contents/MacOS/PvPDuel"
           updater="$app/Contents/MacOS/pvp_duel_updater"
 
-          # Bundle dependencies from both executables.
-          for binary in "$main" "$updater"; do
-            dylibbundler -od -b \
-              -x "$binary" \
-              -d "$frameworks" \
-              -p '@executable_path/../Frameworks'
-          done
+          # dylibbundler supports repeated -x inputs. Invoke it once: -od
+          # clears the destination directory, so a separate invocation for the
+          # updater would discard the main executable's bundled dependencies.
+          dylibbundler -od -b \
+            -x "$main" \
+            -x "$updater" \
+            -d "$frameworks" \
+            -p '@executable_path/../Frameworks'
 
           rewrite_homebrew_refs() {
             local binary="$1"
