@@ -10,65 +10,94 @@ permissions:
   contents: write
 
 jobs:
-  appimage:
-    runs-on: ubuntu-22.04
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-22.04
+            platform: linux
+          - name: macos-arm64
+            os: macos-14
+            platform: macos
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build and test client
+      - name: Build Linux AppImage
+        if: matrix.platform == 'linux'
         env:
           GATEWAY_URL: https://example.invalid
           PVP_DUEL_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.0.0-dev' }}
           PVP_DUEL_UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
-        run: make appimage
-
-      - name: Verify AppImage
         run: |
-          test -s dist/PvPDuel-x86_64.AppImage
-          file dist/PvPDuel-x86_64.AppImage
+          make appimage
           sha256sum dist/PvPDuel-x86_64.AppImage > dist/PvPDuel-x86_64.AppImage.sha256
 
-      - name: Upload CI artifact
-        if: startsWith(github.ref, 'refs/tags/v') == false
-        uses: actions/upload-artifact@v4
-        with:
-          name: pvp-duel-client
-          path: |
-            dist/PvPDuel-x86_64.AppImage
-            dist/PvPDuel-x86_64.AppImage.sha256
-
-  macos-arm64:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install client dependencies
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos'
         run: brew install cmake buf protobuf abseil libmsquic openssl
 
       - name: Generate protobuf bindings
+        if: matrix.platform == 'macos'
         run: make proto
 
-      - name: Configure and build ARM64 client
+      - name: Build macOS ARM64 client
+        if: matrix.platform == 'macos'
         env:
           PVP_DUEL_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.0.0-dev' }}
           PVP_DUEL_UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
         run: |
-          cmake -S client -B client/build-macos -DCMAKE_BUILD_TYPE=Release \\
-            -DCMAKE_OSX_ARCHITECTURES=arm64 \\
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \\
-            -DPVP_DUEL_VERSION="$PVP_DUEL_VERSION" \\
+          cmake -S client -B client/build-macos -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
+            -DPVP_DUEL_VERSION="$PVP_DUEL_VERSION" \
             -DPVP_DUEL_UPDATE_MANIFEST_URL="$PVP_DUEL_UPDATE_MANIFEST_URL"
           cmake --build client/build-macos --parallel
           ctest --test-dir client/build-macos --output-on-failure
 
-      - name: Upload macOS ARM64 build
+          mkdir -p dist/PvPDuel.app/Contents/MacOS
+          cp client/build-macos/pvp_duel_client dist/PvPDuel.app/Contents/MacOS/PvPDuel
+          cat > dist/PvPDuel.app/Contents/Info.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleExecutable</key><string>PvPDuel</string>
+            <key>CFBundleIdentifier</key><string>com.github.dprishchepa.pvp-duel</string>
+            <key>CFBundleName</key><string>PvP Duel</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleVersion</key><string>${PVP_DUEL_VERSION}</string>
+            <key>CFBundleShortVersionString</key><string>${PVP_DUEL_VERSION#v}</string>
+          </dict></plist>
+          PLIST
+          codesign --force --deep --sign - dist/PvPDuel.app
+          codesign --verify --deep --strict dist/PvPDuel.app
+          ditto -c -k --sequesterRsrc --keepParent dist/PvPDuel.app dist/PvPDuel-macos-arm64.zip
+          shasum -a 256 dist/PvPDuel-macos-arm64.zip > dist/PvPDuel-macos-arm64.zip.sha256
+
+      - name: Upload platform artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: pvp-duel-client-macos-arm64
-          path: client/build-macos/pvp_duel_client
+          name: pvp-duel-client-${{ matrix.name }}
+          path: dist/*
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pvp-duel-client-*
+          path: dist
+          merge-multiple: true
 
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -79,6 +108,8 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             dist/PvPDuel-x86_64.AppImage \
             dist/PvPDuel-x86_64.AppImage.sha256 \
+            dist/PvPDuel-macos-arm64.zip \
+            dist/PvPDuel-macos-arm64.zip.sha256 \
             dist/latest.json \
             --title "PvP Duel $GITHUB_REF_NAME" \
             --generate-notes
