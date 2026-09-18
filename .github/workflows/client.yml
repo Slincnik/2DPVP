@@ -97,19 +97,37 @@ jobs:
             -d "$frameworks" \
             -p '@executable_path/../Frameworks'
 
-          # Rewrite any remaining Homebrew references in both executables.
-          while read -r dependency; do
-            name="$(basename "$dependency")"
-            bundled="$frameworks/$name"
-            if [[ -f "$bundled" ]]; then
-              install_name_tool -change "$dependency" \
-                "@executable_path/../Frameworks/$name" "$main" 2>/dev/null || true
-              install_name_tool -change "$dependency" \
-                "@executable_path/../Frameworks/$name" "$updater" 2>/dev/null || true
-            fi
+          # Rewrite Homebrew references in the executables and all bundled dylibs.
+          rewrite_homebrew_refs() {
+            local binary="$1"
+            local dependency name bundled
+
+            while IFS= read -r dependency; do
+              [[ "$dependency" == /opt/homebrew/* ]] || continue
+              name="$(basename "$dependency")"
+              bundled="$frameworks/$name"
+
+              if [[ ! -f "$bundled" ]]; then
+                echo "Missing bundled dependency: $dependency"
+                return 1
+              fi
+
+              install_name_tool -change \
+                "$dependency" \
+                "@executable_path/../Frameworks/$name" \
+                "$binary"
+            done < <(
+              otool -L "$binary" |
+                awk 'NR > 1 {print $1}' |
+                sort -u
+            )
+          }
+
+          while IFS= read -r binary; do
+            rewrite_homebrew_refs "$binary"
           done < <(
-            { otool -L "$main"; otool -L "$updater"; } \
-              | awk '/\/opt\/homebrew\// {print $1}' | sort -u
+            find "$app/Contents" -type f \
+              \( -name '*.dylib' -o -perm -111 \)
           )
 
           test -f "$frameworks/$protobuf_name"
