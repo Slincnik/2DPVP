@@ -78,32 +78,40 @@ jobs:
           test -n "$protobuf_lib"
           protobuf_name="$(basename "$protobuf_lib")"
           cp -L "$protobuf_lib" "dist/PvPDuel.app/Contents/Frameworks/$protobuf_name"
-          protobuf_reference="$(otool -L dist/PvPDuel.app/Contents/MacOS/PvPDuel | awk '/libprotobuf\./ {print $1; exit}')"
-          test -n "$protobuf_reference"
-          install_name_tool -change "$protobuf_reference" \
-            "@executable_path/../Frameworks/$protobuf_name" \
-            dist/PvPDuel.app/Contents/MacOS/PvPDuel
           app="dist/PvPDuel.app"
           frameworks="$app/Contents/Frameworks"
           main="$app/Contents/MacOS/PvPDuel"
           updater="$app/Contents/MacOS/pvp_duel_updater"
 
-          dylibbundler -od -b \
-            -x "$main" \
-            -d "$frameworks" \
-            -p '@executable_path/../Frameworks'
-          dylibbundler -od -b \
-            -x "$updater" \
-            -d "$frameworks" \
-            -p '@executable_path/../Frameworks'
+          # Bundle dependencies from both executables.
+          for binary in "$main" "$updater"; do
+            dylibbundler -od -b \
+              -x "$binary" \
+              -d "$frameworks" \
+              -p '@executable_path/../Frameworks'
+          done
 
-          # Rewrite Homebrew references in the executables and all bundled dylibs.
           rewrite_homebrew_refs() {
             local binary="$1"
             local dependency name bundled
 
+            # Rewrite the dylib's own install ID if it points into Homebrew.
+            if [[ "$binary" == *.dylib ]]; then
+              local id
+              id="$(otool -D "$binary" 2>/dev/null | sed -n '2p' || true)"
+
+              if [[ "$id" == /opt/homebrew/* ]]; then
+                name="$(basename "$id")"
+                install_name_tool -id \
+                  "@executable_path/../Frameworks/$name" \
+                  "$binary"
+              fi
+            fi
+
+            # Rewrite all direct Homebrew dependencies.
             while IFS= read -r dependency; do
               [[ "$dependency" == /opt/homebrew/* ]] || continue
+
               name="$(basename "$dependency")"
               bundled="$frameworks/$name"
 
@@ -118,17 +126,22 @@ jobs:
                 "$binary"
             done < <(
               otool -L "$binary" |
-                awk 'NR > 1 {print $1}' |
+                sed '1d' |
+                awk '{print $1}' |
                 sort -u
             )
           }
 
-          while IFS= read -r binary; do
-            rewrite_homebrew_refs "$binary"
-          done < <(
-            find "$app/Contents" -type f \
-              \( -name '*.dylib' -o -perm -111 \)
-          )
+          # Repeat because changing one dependency can expose dependencies in
+          # newly bundled dylibs.
+          for pass in 1 2 3; do
+            while IFS= read -r binary; do
+              rewrite_homebrew_refs "$binary"
+            done < <(
+              find "$app/Contents" -type f \
+                \( -name '*.dylib' -o -perm -111 \)
+            )
+          done
 
           test -f "$frameworks/$protobuf_name"
           echo 'Main executable dependencies:'
@@ -138,16 +151,36 @@ jobs:
           echo 'Bundled frameworks:'
           find "$frameworks" -maxdepth 1 -type f -print
 
+          echo 'Checking for remaining Homebrew references:'
+          failed=0
+
           while IFS= read -r binary; do
-            if grep -q '/opt/homebrew/' < <(otool -L "$binary"); then
+            if otool -L "$binary" | grep -q '/opt/homebrew/'; then
               echo "Unbundled Homebrew dependency in: $binary"
               otool -L "$binary"
-              exit 1
+              failed=1
+            fi
+
+            if [[ "$binary" == *.dylib ]] &&
+               otool -D "$binary" 2>/dev/null | grep -q '/opt/homebrew/'; then
+              echo "Homebrew install ID in: $binary"
+              otool -D "$binary"
+              failed=1
             fi
           done < <(
             find "$app/Contents" -type f \
               \( -name '*.dylib' -o -perm -111 \)
           )
+
+          test "$failed" -eq 0
+
+          # install_name_tool invalidates signatures, so sign after all rewrites.
+          find "$app/Contents" -type f \
+            \( -name '*.dylib' -o -perm -111 \) \
+            -exec codesign --force --sign - {} \;
+
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
 
           ditto -c -k --sequesterRsrc --keepParent \
             "$app" dist/PvPDuel-macos-arm64.zip
