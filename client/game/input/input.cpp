@@ -41,6 +41,29 @@ void SetError(std::string_view* error, std::string_view message) noexcept {
 
 } // namespace
 
+bool PendingActionQueue::Enqueue(Action action) noexcept {
+    if (!IsEdgeAction(action) || pending_.size() >= kMaximumSize || nextSequence_ == 0) {
+        return false;
+    }
+    pending_.push_back(ActionCommand{.sequence = nextSequence_++, .action = action});
+    return true;
+}
+
+void PendingActionQueue::Acknowledge(std::uint32_t sequence) noexcept {
+    std::erase_if(pending_, [sequence](const ActionCommand& command) {
+        return command.sequence <= sequence;
+    });
+}
+
+void PendingActionQueue::Reset() noexcept {
+    nextSequence_ = 1;
+    pending_.clear();
+}
+
+const std::vector<ActionCommand>& PendingActionQueue::Pending() const noexcept {
+    return pending_;
+}
+
 InputBindings InputBindings::Defaults() {
     return InputBindings({
         {Action::MoveUp, InputCode::KeyW},

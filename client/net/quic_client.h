@@ -3,8 +3,10 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 
+#include "game/input/input.h"
 #include "game/v1/duel.pb.h"
 
 namespace duel::net {
@@ -23,7 +25,12 @@ public:
         const std::string& matchToken,
         const std::string& playerId
     );
-    bool SendInput(std::uint32_t tick, std::int32_t moveX, std::int32_t moveY, bool attack);
+    bool SendInput(
+        std::uint32_t tick,
+        std::int32_t moveX,
+        std::int32_t moveY,
+        std::span<const game::input::ActionCommand> pendingActions
+    );
     std::optional<::game::v1::MatchStart> PollMatchStart();
     std::optional<::game::v1::WorldSnapshot> PollSnapshot();
     std::optional<::game::v1::MatchEnd> PollMatchEnd();

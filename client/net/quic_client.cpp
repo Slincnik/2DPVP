@@ -15,7 +15,7 @@
 namespace duel::net {
 namespace {
 
-constexpr std::string_view kAlpn = "pvp-duel-v1";
+constexpr std::string_view kAlpn = "pvp-duel-v2";
 constexpr std::uint32_t kMaxFrameSize = 64U << 10U;
 
 struct SendContext {
@@ -27,6 +27,17 @@ struct SendContext {
     std::vector<std::uint8_t> bytes;
     QUIC_BUFFER buffer{};
 };
+
+::game::v1::ActionType ProtocolActionType(game::input::Action action) noexcept {
+    switch (action) {
+    case game::input::Action::Dash:
+        return ::game::v1::ACTION_TYPE_DASH;
+    case game::input::Action::LightAttack:
+        return ::game::v1::ACTION_TYPE_LIGHT_ATTACK;
+    default:
+        return ::game::v1::ACTION_TYPE_UNSPECIFIED;
+    }
+}
 
 std::vector<std::uint8_t> Serialize(const google::protobuf::MessageLite& message) {
     const auto payloadSize = message.ByteSizeLong();
@@ -138,13 +149,22 @@ public:
         std::uint32_t tick,
         std::int32_t moveX,
         std::int32_t moveY,
-        bool attack
+        std::span<const game::input::ActionCommand> pendingActions
     ) {
         ::game::v1::PlayerInput input;
         input.set_tick(tick);
         input.set_move_x(moveX);
         input.set_move_y(moveY);
-        input.set_attack(attack);
+        const auto commandCount = std::min(
+            pendingActions.size(),
+            game::input::PendingActionQueue::kMaximumSize
+        );
+        for (std::size_t index = 0; index < commandCount; ++index) {
+            const auto& command = pendingActions[index];
+            auto* protocolCommand = input.add_pending_actions();
+            protocolCommand->set_sequence(command.sequence);
+            protocolCommand->set_type(ProtocolActionType(command.action));
+        }
         return SendDatagram(input);
     }
 
@@ -504,9 +524,9 @@ bool QuicClient::SendInput(
     std::uint32_t tick,
     std::int32_t moveX,
     std::int32_t moveY,
-    bool attack
+    std::span<const game::input::ActionCommand> pendingActions
 ) {
-    return impl_->SendInput(tick, moveX, moveY, attack);
+    return impl_->SendInput(tick, moveX, moveY, pendingActions);
 }
 
 std::optional<::game::v1::MatchStart> QuicClient::PollMatchStart() {

@@ -46,8 +46,10 @@ func TestLoop_RunReturnsAfterFinishedMatch(t *testing.T) {
 	loop := NewLoop(duel, inputs, snapshots)
 	done := runLoop(loop, t.Context(), ticks)
 
-	inputs <- QueuedInput{PlayerID: "alice", Input: Input{Tick: 1, Attack: true}}
-	inputs <- QueuedInput{PlayerID: "bob", Input: Input{Tick: 1, Attack: true}}
+	duel.players[0].ActionState = ActionStateLightAttackWindup
+	duel.players[0].ActionTicksRemaining = 1
+	duel.players[1].ActionState = ActionStateLightAttackWindup
+	duel.players[1].ActionTicksRemaining = 1
 	ticks <- time.Now()
 
 	snapshot := receiveSnapshot(t, snapshots)
@@ -73,7 +75,8 @@ func TestLoop_TerminalSnapshotReplacesQueuedLossySnapshot(t *testing.T) {
 	loop := NewLoop(duel, inputs, snapshots)
 	done := runLoop(loop, t.Context(), ticks)
 
-	inputs <- QueuedInput{PlayerID: "alice", Input: Input{Tick: 1, Attack: true}}
+	duel.players[0].ActionState = ActionStateLightAttackWindup
+	duel.players[0].ActionTicksRemaining = 1
 	ticks <- time.Now()
 
 	if err := <-done; err != nil {

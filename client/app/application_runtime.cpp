@@ -146,6 +146,7 @@ int duel::app::Application::Run() {
     std::optional<duel::game::input::InputBindings> pendingBindings;
     duel::platform::RaylibInputAdapter inputAdapter;
     duel::game::input::InputSampler inputSampler(inputBindings);
+    duel::game::input::PendingActionQueue pendingActions;
     std::optional<duel::game::input::Action> captureAction;
     std::string settingsMessage = "Loading settings...";
     bool settingsLoaded = false;
@@ -388,6 +389,7 @@ int duel::app::Application::Run() {
                 opponentInterpolation = duel::game::InterpolationBuffer{};
                 resetPlayerVisuals();
                 inputTick = 0;
+                pendingActions.Reset();
                 accumulator = 0.0F;
                 localAttackSoundCooldown = 0.0F;
                 matchStarted = false;
@@ -417,6 +419,7 @@ int duel::app::Application::Run() {
                     world = std::move(*snapshot);
                     for (const auto& player : world.players()) {
                         if (player.player_id() == session.userId) {
+                            pendingActions.Acknowledge(player.last_acked_action_sequence());
                             prediction.Reconcile(player);
                         } else {
                             opponentInterpolation.Push(
@@ -446,26 +449,20 @@ int duel::app::Application::Run() {
                     && world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
                     const auto moveX = static_cast<std::int32_t>(inputFrame.moveX);
                     const auto moveY = static_cast<std::int32_t>(inputFrame.moveY);
-                    const auto attackCode = inputBindings.InputFor(
-                        duel::game::input::Action::LightAttack
-                    );
-                    // Compatibility with the v1 protocol: LightAttack remains a held
-                    // boolean until action commands land in migration stage 4. Dash
-                    // edges are buffered by InputSampler but intentionally not sent.
-                    const bool attack = attackCode && inputAdapter.IsDown(*attackCode);
-                    ++inputTick;
-                    prediction.ApplyInput(inputTick, moveX, moveY);
-                    if (attack) {
-                        if (localAttackSoundCooldown <= 0.0F) {
+                    for (const auto action : inputFrame.pressed) {
+                        if (pendingActions.Enqueue(action)
+                            && action == duel::game::input::Action::LightAttack
+                            && localAttackSoundCooldown <= 0.0F) {
                             playerVisuals[session.userId].attackFlash = kAttackFlashDuration;
                             if (audioReady && SoundReady(attackSound)) {
                                 PlaySound(attackSound);
                             }
-                            // The server applies held attacks every 15 ticks (0.5 s).
                             localAttackSoundCooldown = kAttackFeedbackCooldown;
                         }
                     }
-                    network->SendInput(inputTick, moveX, moveY, attack);
+                    ++inputTick;
+                    prediction.ApplyInput(inputTick, moveX, moveY);
+                    network->SendInput(inputTick, moveX, moveY, pendingActions.Pending());
                 }
             }
             prediction.AdvanceVisual(std::min(frameTime * 12.0F, 1.0F));

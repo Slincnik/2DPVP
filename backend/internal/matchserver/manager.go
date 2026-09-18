@@ -310,13 +310,23 @@ func newPlayerSession(match *match, playerID string, start *gamev1.MatchStart) *
 }
 
 func (s *playerSession) SubmitInput(input *gamev1.PlayerInput) error {
+	actions := make([]room.ActionCommand, 0, min(len(input.GetPendingActions()), room.MaxPendingActions))
+	for _, command := range input.GetPendingActions() {
+		if len(actions) == room.MaxPendingActions {
+			break
+		}
+		actions = append(actions, room.ActionCommand{
+			Sequence: command.GetSequence(),
+			Type:     actionTypeFromProto(command.GetType()),
+		})
+	}
 	queued := room.QueuedInput{
 		PlayerID: s.playerID,
 		Input: room.Input{
-			Tick:   input.GetTick(),
-			MoveX:  clampProtoAxis(input.GetMoveX()),
-			MoveY:  clampProtoAxis(input.GetMoveY()),
-			Attack: input.GetAttack(),
+			Tick:    input.GetTick(),
+			MoveX:   clampProtoAxis(input.GetMoveX()),
+			MoveY:   clampProtoAxis(input.GetMoveY()),
+			Actions: actions,
 		},
 	}
 	select {
@@ -355,13 +365,17 @@ func snapshotToProto(snapshot room.Snapshot) *gamev1.WorldSnapshot {
 	players := make([]*gamev1.PlayerState, 0, len(snapshot.Players))
 	for _, player := range snapshot.Players {
 		players = append(players, &gamev1.PlayerState{
-			PlayerId:           player.ID,
-			PositionX:          player.PositionX,
-			PositionY:          player.PositionY,
-			Hp:                 player.HP,
-			LastAckedInputTick: player.LastAckedInputTick,
-			FacingX:            int32(player.FacingX),
-			FacingY:            int32(player.FacingY),
+			PlayerId:                player.ID,
+			PositionX:               player.PositionX,
+			PositionY:               player.PositionY,
+			Hp:                      player.HP,
+			LastAckedInputTick:      player.LastAckedInputTick,
+			FacingX:                 int32(player.FacingX),
+			FacingY:                 int32(player.FacingY),
+			LastAckedActionSequence: player.LastAckedActionSequence,
+			ActionState:             actionStateToProto(player.ActionState),
+			ActionStartedServerTick: player.ActionStartedServerTick,
+			ActionTicksRemaining:    player.ActionTicksRemaining,
 		})
 	}
 
@@ -381,6 +395,38 @@ func snapshotToProto(snapshot room.Snapshot) *gamev1.WorldSnapshot {
 		WinnerPlayerId:          snapshot.WinnerID,
 		CountdownTicksRemaining: snapshot.CountdownTicksRemaining,
 		MatchTicksRemaining:     snapshot.MatchTicksRemaining,
+	}
+}
+
+func actionTypeFromProto(action gamev1.ActionType) room.ActionType {
+	switch action {
+	case gamev1.ActionType_ACTION_TYPE_DASH:
+		return room.ActionDash
+	case gamev1.ActionType_ACTION_TYPE_LIGHT_ATTACK:
+		return room.ActionLightAttack
+	default:
+		return room.ActionUnspecified
+	}
+}
+
+func actionStateToProto(state room.ActionState) gamev1.PlayerActionState {
+	switch state {
+	case room.ActionStateMove:
+		return gamev1.PlayerActionState_PLAYER_ACTION_STATE_MOVE
+	case room.ActionStateDash:
+		return gamev1.PlayerActionState_PLAYER_ACTION_STATE_DASH
+	case room.ActionStateLightAttackWindup:
+		return gamev1.PlayerActionState_PLAYER_ACTION_STATE_LIGHT_ATTACK_WINDUP
+	case room.ActionStateLightAttackActive:
+		return gamev1.PlayerActionState_PLAYER_ACTION_STATE_LIGHT_ATTACK_ACTIVE
+	case room.ActionStateLightAttackRecovery:
+		return gamev1.PlayerActionState_PLAYER_ACTION_STATE_LIGHT_ATTACK_RECOVERY
+	case room.ActionStateHit:
+		return gamev1.PlayerActionState_PLAYER_ACTION_STATE_HIT
+	case room.ActionStateKO:
+		return gamev1.PlayerActionState_PLAYER_ACTION_STATE_KO
+	default:
+		return gamev1.PlayerActionState_PLAYER_ACTION_STATE_IDLE
 	}
 }
 

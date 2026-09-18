@@ -2,14 +2,40 @@
 
 ## QUIC
 
-- ALPN: `pvp-duel-v1`.
+- ALPN: `pvp-duel-v2`. Клиенты `v1` намеренно не соединяются с action-based
+  room и не смешиваются с новым ruleset.
 - Сервер: UDP `:4242` по умолчанию.
 - Один двунаправленный reliable QUIC stream используется для аутентификации,
   `MatchReady`, `MatchStart` и `MatchEnd`.
 - `PlayerInput` и `WorldSnapshot` передаются QUIC datagram без framing: граница
   datagram уже является границей одного protobuf payload.
 - Серверный fixed tick работает независимо от входящих пакетов. Datagram лишь
-  заменяет последний известный input; snapshot публикуется с частотой 30 Hz.
+  заменяет последний известный movement input; snapshot публикуется с частотой
+  30 Hz.
+
+## Gameplay input v2
+
+`PlayerInput.move_x/move_y` остаются held-state. Одноразовые действия передаются
+как `pending_actions` (не более 8 команд):
+
+- `ACTION_TYPE_DASH`;
+- `ACTION_TYPE_LIGHT_ATTACK`.
+
+Каждая команда имеет монотонный `sequence`. Клиент повторяет все pending-команды
+в последующих datagram, пока authoritative `PlayerState.last_acked_action_sequence`
+не подтвердит их обработку. Сервер сортирует и дедуплицирует команды, принимает
+sequence только в ограниченном окне (64 значения после последнего ack) и
+подтверждает также команды, отклонённые из-за cooldown, phase или неизвестного
+type. Пакет несёт максимум 8 команд; input tick не может продвинуться более чем
+на 120 относительно последнего принятого tick.
+
+Поле `PlayerInput.attack = 4` сохранено только для wire compatibility, помечено
+deprecated и симуляцией v2 не читается.
+
+`PlayerState.action_state`, `action_started_server_tick` и
+`action_ticks_remaining` являются authoritative timeline для клиента. Datagram
+loss не требует восстановления visual event history: новый snapshot полностью
+описывает текущую phase.
 
 ## Framing reliable stream
 

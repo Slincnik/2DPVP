@@ -12,6 +12,7 @@ using duel::game::input::InputBindings;
 using duel::game::input::InputCode;
 using duel::game::input::InputSampler;
 using duel::game::input::InputSource;
+using duel::game::input::PendingActionQueue;
 
 void Require(bool condition) {
     if (!condition) {
@@ -80,6 +81,35 @@ void TestHeldMovementAndBufferedEdges() {
     Require(second.pressed.empty());
 }
 
+void TestPendingActionsRepeatUntilAcknowledgedAndStayBounded() {
+    PendingActionQueue queue;
+    Require(queue.Enqueue(Action::Dash));
+    Require(queue.Enqueue(Action::LightAttack));
+    Require(queue.Pending().size() == 2);
+    Require(queue.Pending()[0].sequence == 1);
+    Require(queue.Pending()[1].sequence == 2);
+
+    // Reading the queue models retransmission in another datagram and does not consume it.
+    Require(queue.Pending().size() == 2);
+    queue.Acknowledge(1);
+    Require(queue.Pending().size() == 1);
+    Require(queue.Pending()[0].sequence == 2);
+    queue.Acknowledge(2);
+    Require(queue.Pending().empty());
+
+    for (std::size_t index = 0; index < PendingActionQueue::kMaximumSize; ++index) {
+        Require(queue.Enqueue(Action::Dash));
+    }
+    Require(!queue.Enqueue(Action::LightAttack));
+    Require(queue.Pending().size() == PendingActionQueue::kMaximumSize);
+    Require(!queue.Enqueue(Action::MoveUp));
+
+    queue.Reset();
+    Require(queue.Pending().empty());
+    Require(queue.Enqueue(Action::LightAttack));
+    Require(queue.Pending().front().sequence == 1);
+}
+
 void TestRebindAppliesOnNextObservedFrame() {
     auto bindings = InputBindings::Defaults();
     InputSampler sampler(bindings);
@@ -104,6 +134,7 @@ void TestRebindAppliesOnNextObservedFrame() {
 int main() {
     TestDefaultsAndValidation();
     TestHeldMovementAndBufferedEdges();
+    TestPendingActionsRepeatUntilAcknowledgedAndStayBounded();
     TestRebindAppliesOnNextObservedFrame();
     return 0;
 }

@@ -28,7 +28,7 @@ func NewLoop(room *Room, inputs <-chan QueuedInput, snapshots chan Snapshot) *Lo
 }
 
 func (l *Loop) RunRealtime(ctx context.Context) error {
-	ticker := time.NewTicker(time.Second / TickRate)
+	ticker := time.NewTicker(time.Second / time.Duration(l.room.TickRate()))
 	defer ticker.Stop()
 
 	return l.Run(ctx, ticker.C)

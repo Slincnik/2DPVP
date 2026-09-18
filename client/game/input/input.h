@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string_view>
@@ -62,6 +63,25 @@ struct InputFrame {
     std::int8_t moveX = 0;
     std::int8_t moveY = 0;
     std::vector<Action> pressed;
+};
+
+struct ActionCommand {
+    std::uint32_t sequence = 0;
+    Action action = Action::Dash;
+};
+
+class PendingActionQueue {
+public:
+    static constexpr std::size_t kMaximumSize = 8;
+
+    [[nodiscard]] bool Enqueue(Action action) noexcept;
+    void Acknowledge(std::uint32_t sequence) noexcept;
+    void Reset() noexcept;
+    [[nodiscard]] const std::vector<ActionCommand>& Pending() const noexcept;
+
+private:
+    std::uint32_t nextSequence_ = 1;
+    std::vector<ActionCommand> pending_;
 };
 
 class InputSource {

@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	ALPN                = "pvp-duel-v1"
+	ALPN                = "pvp-duel-v2"
 	MatchEndGracePeriod = 2 * time.Second
 )
 

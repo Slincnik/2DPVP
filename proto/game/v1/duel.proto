@@ -9,11 +9,34 @@ message AuthenticateRequest {
   string player_id = 2;
 }
 
+enum ActionType {
+  ACTION_TYPE_UNSPECIFIED = 0;
+  ACTION_TYPE_DASH = 1;
+  ACTION_TYPE_LIGHT_ATTACK = 2;
+}
+
+message ActionCommand {
+  uint32 sequence = 1;
+  ActionType type = 2;
+}
+
 message PlayerInput {
   uint32 tick = 1;
   sint32 move_x = 2;
   sint32 move_y = 3;
-  bool attack = 4;
+  bool attack = 4 [deprecated = true];
+  repeated ActionCommand pending_actions = 5; // protocol maximum: 8
+}
+
+enum PlayerActionState {
+  PLAYER_ACTION_STATE_IDLE = 0;
+  PLAYER_ACTION_STATE_MOVE = 1;
+  PLAYER_ACTION_STATE_DASH = 2;
+  PLAYER_ACTION_STATE_LIGHT_ATTACK_WINDUP = 3;
+  PLAYER_ACTION_STATE_LIGHT_ATTACK_ACTIVE = 4;
+  PLAYER_ACTION_STATE_LIGHT_ATTACK_RECOVERY = 5;
+  PLAYER_ACTION_STATE_HIT = 6;
+  PLAYER_ACTION_STATE_KO = 7;
 }
 
 message PlayerState {
@@ -24,6 +47,10 @@ message PlayerState {
   uint32 last_acked_input_tick = 5;
   sint32 facing_x = 6;
   sint32 facing_y = 7;
+  uint32 last_acked_action_sequence = 8;
+  PlayerActionState action_state = 9;
+  uint32 action_started_server_tick = 10;
+  uint32 action_ticks_remaining = 11;
 }
 
 // ACTIVE and FINISHED retain their original numeric values for wire compatibility.
