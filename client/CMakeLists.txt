@@ -120,6 +120,10 @@ add_library(duel_protocol STATIC proto/game/v1/duel.pb.cc)
 target_include_directories(duel_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 target_link_libraries(duel_protocol PUBLIC protobuf::libprotobuf ${PROTOBUF_PLATFORM_LIBS})
 
+add_library(duel_app STATIC app/application.cpp)
+target_include_directories(duel_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(duel_app PRIVATE -Wall -Wextra -Wpedantic)
+
 add_library(duel_game STATIC game/prediction.cpp game/interpolation.cpp game/match_lifecycle.cpp)
 target_include_directories(duel_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(duel_game PUBLIC duel_protocol)
@@ -165,6 +169,11 @@ set_target_properties(pvp_duel_client PROPERTIES BUILD_RPATH "${MSQUIC_LIBRARY_D
 if(UNIX AND NOT APPLE)
     target_link_options(pvp_duel_client PRIVATE "-Wl,--disable-new-dtags")
 endif()
+
+add_executable(application_test tests/application_test.cpp)
+target_link_libraries(application_test PRIVATE duel_app)
+target_compile_options(application_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME application_test COMMAND application_test)
 
 add_executable(prediction_test tests/prediction_test.cpp)
 target_link_libraries(prediction_test PRIVATE duel_game)
