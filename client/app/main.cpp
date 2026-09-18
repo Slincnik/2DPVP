@@ -276,9 +276,14 @@ int main() {
         }
     }
 
+#ifdef PVP_DUEL_DEFAULT_GATEWAY_URL
+    constexpr const char* defaultGateway = PVP_DUEL_DEFAULT_GATEWAY_URL;
+#else
+    constexpr const char* defaultGateway = "http://localhost:8080";
+#endif
     const char* configuredGateway = std::getenv("GATEWAY_URL");
     duel::api::GatewayClient gateway(
-        configuredGateway != nullptr ? configuredGateway : "http://localhost:8080");
+        configuredGateway != nullptr ? configuredGateway : defaultGateway);
     std::unique_ptr<duel::net::QuicClient> network;
     duel::api::AuthSession session;
     std::future<AuthResult> authFuture;

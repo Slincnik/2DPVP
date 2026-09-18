@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 project(pvp_duel_client LANGUAGES C CXX)
 
+set(PVP_DUEL_DEFAULT_GATEWAY_URL "http://localhost:8080" CACHE STRING
+    "Gateway URL embedded as the client default")
+
 enable_testing()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -135,6 +138,9 @@ target_compile_options(duel_net PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(pvp_duel_client app/main.cpp)
 target_link_libraries(pvp_duel_client PRIVATE raylib duel_api duel_game duel_net)
+target_compile_definitions(pvp_duel_client PRIVATE
+    PVP_DUEL_DEFAULT_GATEWAY_URL="${PVP_DUEL_DEFAULT_GATEWAY_URL}"
+)
 target_compile_options(pvp_duel_client PRIVATE -Wall -Wextra -Wpedantic)
 set_target_properties(pvp_duel_client PROPERTIES BUILD_RPATH "${MSQUIC_LIBRARY_DIR}")
 if(UNIX AND NOT APPLE)
