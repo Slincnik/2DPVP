@@ -38,7 +38,7 @@ jobs:
 
       - name: Install macOS dependencies
         if: matrix.platform == 'macos'
-        run: brew install cmake buf protobuf abseil libmsquic openssl
+        run: brew install cmake buf protobuf abseil libmsquic openssl dylibbundler
 
       - name: Generate protobuf bindings
         if: matrix.platform == 'macos'
@@ -73,8 +73,18 @@ jobs:
             <key>CFBundleShortVersionString</key><string>${PVP_DUEL_VERSION#v}</string>
           </dict></plist>
           PLIST
+          mkdir -p dist/PvPDuel.app/Contents/Frameworks
+          dylibbundler -od -b \
+            -x dist/PvPDuel.app/Contents/MacOS/PvPDuel \
+            -d dist/PvPDuel.app/Contents/Frameworks \
+            -p '@executable_path/../Frameworks'
+          dylibbundler -od -b \
+            -x dist/PvPDuel.app/Contents/MacOS/pvp_duel_updater \
+            -d dist/PvPDuel.app/Contents/Frameworks \
+            -p '@executable_path/../Frameworks'
           codesign --force --deep --sign - dist/PvPDuel.app
           codesign --verify --deep --strict dist/PvPDuel.app
+          ! otool -L dist/PvPDuel.app/Contents/MacOS/PvPDuel | grep -q '/opt/homebrew'
           ditto -c -k --sequesterRsrc --keepParent dist/PvPDuel.app dist/PvPDuel-macos-arm64.zip
           shasum -a 256 dist/PvPDuel-macos-arm64.zip > dist/PvPDuel-macos-arm64.zip.sha256
 
