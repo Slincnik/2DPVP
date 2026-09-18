@@ -3,6 +3,7 @@
 The client pipeline is defined in `.github/workflows/client.yml`.
 
 - Pull requests and pushes to `main` build and test the Linux AppImage.
+- Pull requests and pushes to `main` also build and test the native macOS ARM64 client on `macos-14`.
 - A tag such as `v0.1.0` creates a GitHub Release.
 - The release contains the AppImage, its SHA-256 checksum, and `latest.json`.
 - `latest.json` is downloaded from the stable `latest` release URL.
@@ -14,6 +15,11 @@ new version.
 
 Local builds have updates disabled unless `PVP_DUEL_UPDATE_MANIFEST_URL` is
 provided. The release workflow embeds the repository's `latest.json` URL.
+
+The macOS build keeps the existing native secure storage implementation: the
+refresh token is stored in macOS Keychain through `Security.framework`. The
+macOS CI build is currently an unsigned ARM64 validation artifact; packaging
+and automatic replacement of a `.app` bundle will be added separately.
 
 Create a release with:
 

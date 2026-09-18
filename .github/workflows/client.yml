@@ -37,6 +37,36 @@ jobs:
             dist/PvPDuel-x86_64.AppImage
             dist/PvPDuel-x86_64.AppImage.sha256
 
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install client dependencies
+        run: brew install cmake buf protobuf abseil libmsquic openssl
+
+      - name: Generate protobuf bindings
+        run: make proto
+
+      - name: Configure and build ARM64 client
+        env:
+          PVP_DUEL_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.0.0-dev' }}
+          PVP_DUEL_UPDATE_MANIFEST_URL: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+        run: |
+          cmake -S client -B client/build-macos -DCMAKE_BUILD_TYPE=Release \\
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \\
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \\
+            -DPVP_DUEL_VERSION="$PVP_DUEL_VERSION" \\
+            -DPVP_DUEL_UPDATE_MANIFEST_URL="$PVP_DUEL_UPDATE_MANIFEST_URL"
+          cmake --build client/build-macos --parallel
+          ctest --test-dir client/build-macos --output-on-failure
+
+      - name: Upload macOS ARM64 build
+        uses: actions/upload-artifact@v4
+        with:
+          name: pvp-duel-client-macos-arm64
+          path: client/build-macos/pvp_duel_client
+
       - name: Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         env:
