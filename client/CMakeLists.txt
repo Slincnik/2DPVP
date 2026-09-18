@@ -124,6 +124,15 @@ add_library(duel_app STATIC app/application.cpp)
 target_include_directories(duel_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(duel_app PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(duel_input STATIC game/input/input.cpp)
+target_include_directories(duel_input PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_options(duel_input PRIVATE -Wall -Wextra -Wpedantic)
+
+add_library(duel_settings STATIC platform/settings_store.cpp)
+target_include_directories(duel_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(duel_settings PUBLIC duel_input PRIVATE nlohmann_json::nlohmann_json)
+target_compile_options(duel_settings PRIVATE -Wall -Wextra -Wpedantic)
+
 add_library(duel_game STATIC game/prediction.cpp game/interpolation.cpp game/match_lifecycle.cpp)
 target_include_directories(duel_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(duel_game PUBLIC duel_protocol)
@@ -162,9 +171,12 @@ target_compile_options(duel_net PRIVATE -Wall -Wextra -Wpedantic)
 add_library(duel_client_app STATIC
     app/application_runtime.cpp
     app/screens/client_screens.cpp
+    platform/raylib_input.cpp
 )
 target_include_directories(duel_client_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(duel_client_app PUBLIC duel_app PRIVATE raylib duel_api duel_game duel_net)
+target_link_libraries(duel_client_app PUBLIC duel_app PRIVATE
+    raylib duel_api duel_game duel_input duel_net duel_settings
+)
 target_compile_options(duel_client_app PRIVATE -Wall -Wextra -Wpedantic)
 
 add_executable(pvp_duel_client app/main.cpp)
@@ -182,6 +194,16 @@ add_executable(application_test tests/application_test.cpp)
 target_link_libraries(application_test PRIVATE duel_app)
 target_compile_options(application_test PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME application_test COMMAND application_test)
+
+add_executable(input_test tests/input_test.cpp)
+target_link_libraries(input_test PRIVATE duel_input)
+target_compile_options(input_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME input_test COMMAND input_test)
+
+add_executable(settings_store_test tests/settings_store_test.cpp)
+target_link_libraries(settings_store_test PRIVATE duel_settings)
+target_compile_options(settings_store_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME settings_store_test COMMAND settings_store_test)
 
 add_executable(prediction_test tests/prediction_test.cpp)
 target_link_libraries(prediction_test PRIVATE duel_game)

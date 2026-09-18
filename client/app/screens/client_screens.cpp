@@ -135,6 +135,18 @@ void DrawHitFlash(const ::game::v1::PlayerState& player, const PlayerVisualState
     }
 }
 
+const char* ActionLabel(game::input::Action action) {
+    switch (action) {
+    case game::input::Action::MoveUp: return "Move up";
+    case game::input::Action::MoveDown: return "Move down";
+    case game::input::Action::MoveLeft: return "Move left";
+    case game::input::Action::MoveRight: return "Move right";
+    case game::input::Action::Dash: return "Dash";
+    case game::input::Action::LightAttack: return "Light attack";
+    }
+    return "Unknown";
+}
+
 void DrawPlayer(const ::game::v1::PlayerState& player, Color color) {
     const auto position = ScreenPosition(player);
     const auto direction = FacingDirection(player);
@@ -185,14 +197,21 @@ MainMenuAction DrawMainMenu(
     const std::string& message,
     bool ready,
     bool waiting,
-    bool error
+    bool error,
+    bool settingsReady
 ) {
     DrawText("2D PvP Duel", 500, 120, 36, RAYWHITE);
     DrawText(message.c_str(), 420, 250, 22, LIGHTGRAY);
     if (ready && Button(Rectangle{520, 330, 240, 52}, "Find match")) {
         return MainMenuAction::FindMatch;
     }
-    if (ready && Button(Rectangle{520, 400, 240, 52}, "Logout")) {
+    if (ready && Button(
+            Rectangle{520, 400, 240, 52},
+            settingsReady ? "Settings" : "Loading settings..."
+        ) && settingsReady) {
+        return MainMenuAction::Settings;
+    }
+    if (ready && Button(Rectangle{520, 470, 240, 52}, "Logout")) {
         return MainMenuAction::Logout;
     }
     if (waiting) {
@@ -204,16 +223,59 @@ MainMenuAction DrawMainMenu(
     return MainMenuAction::None;
 }
 
+SettingsScreenEvent DrawSettings(
+    const game::input::InputBindings& bindings,
+    std::optional<game::input::Action> captureAction,
+    const std::string& message,
+    bool savePending
+) {
+    DrawText("Settings", 540, 55, 36, RAYWHITE);
+    DrawText("Select a binding, then press a key", 430, 105, 20, LIGHTGRAY);
+
+    auto event = SettingsScreenEvent{};
+    int row = 0;
+    for (const auto& binding : bindings.All()) {
+        const float y = 155.0F + static_cast<float>(row) * 55.0F;
+        DrawText(ActionLabel(binding.action), 390, static_cast<int>(y + 12.0F), 20, RAYWHITE);
+        const auto codeName = std::string(game::input::InputCodeName(binding.input));
+        const bool capturing = captureAction == binding.action;
+        if (Button(Rectangle{650, y, 240, 44}, capturing ? "Press a key..." : codeName.c_str())) {
+            event.captureAction = binding.action;
+        }
+        ++row;
+    }
+
+    if (!savePending && Button(Rectangle{330, 525, 190, 48}, "Save")) {
+        event.action = SettingsAction::Save;
+    }
+    if (!savePending && Button(Rectangle{545, 525, 190, 48}, "Reset defaults")) {
+        event.action = SettingsAction::ResetDefaults;
+    }
+    if (Button(Rectangle{760, 525, 190, 48}, "Back")) {
+        event.action = SettingsAction::Back;
+    }
+    DrawText(message.c_str(), 390, 610, 18, LIGHTGRAY);
+    return event;
+}
+
 void DrawMatch(
     const ::game::v1::WorldSnapshot& world,
     const std::string& localPlayerId,
     std::uint32_t serverTickRate,
     const duel::game::Prediction& prediction,
     const duel::game::InterpolationBuffer& opponentInterpolation,
-    const std::unordered_map<std::string, PlayerVisualState>& playerVisuals
+    const std::unordered_map<std::string, PlayerVisualState>& playerVisuals,
+    const game::input::InputBindings& bindings
 ) {
     DrawRectangleLines(290, 150, 700, 420, GRAY);
-    DrawText("WASD: move | SPACE: attack", 24, 20, 20, LIGHTGRAY);
+    const auto attack = bindings.InputFor(game::input::Action::LightAttack);
+    const auto dash = bindings.InputFor(game::input::Action::Dash);
+    const auto inputName = [](std::optional<game::input::InputCode> input) {
+        return input ? game::input::InputCodeName(*input) : std::string_view("unbound");
+    };
+    const std::string controls = "Attack: " + std::string(inputName(attack))
+        + " | Dash: " + std::string(inputName(dash));
+    DrawText(controls.c_str(), 24, 20, 20, LIGHTGRAY);
     std::string clockText = "Waiting for match start";
     if (world.status() == ::game::v1::MATCH_STATUS_COUNTDOWN) {
         clockText = "Starts in " + std::to_string(duel::game::TicksToDisplaySeconds(

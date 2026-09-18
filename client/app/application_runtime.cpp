@@ -4,10 +4,13 @@
 #include "api/gateway_client.h"
 #include "auth/secure_storage.h"
 #include "auth/session_manager.h"
+#include "game/input/input.h"
 #include "game/interpolation.h"
 #include "game/match_lifecycle.h"
 #include "game/prediction.h"
 #include "net/quic_client.h"
+#include "platform/raylib_input.h"
+#include "platform/settings_store.h"
 
 #include "raylib.h"
 
@@ -20,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -46,6 +50,7 @@ enum class RuntimeState {
     ConnectPending,
     Playing,
     Result,
+    Settings,
     Error,
 };
 
@@ -132,9 +137,24 @@ int duel::app::Application::Run() {
     std::future<duel::api::Result<bool>> restoreFuture;
     std::future<QueueResult> queueFuture;
     std::future<bool> connectFuture;
+    std::future<duel::platform::SettingsLoadResult> settingsLoadFuture;
+    std::future<duel::platform::SettingsSaveResult> settingsSaveFuture;
+
+    duel::platform::SettingsStore settingsStore(duel::platform::DefaultSettingsPath());
+    auto inputBindings = duel::game::input::InputBindings::Defaults();
+    auto settingsDraft = inputBindings;
+    std::optional<duel::game::input::InputBindings> pendingBindings;
+    duel::platform::RaylibInputAdapter inputAdapter;
+    duel::game::input::InputSampler inputSampler(inputBindings);
+    std::optional<duel::game::input::Action> captureAction;
+    std::string settingsMessage = "Loading settings...";
+    bool settingsLoaded = false;
 
     RuntimeState screen = RuntimeState::Restoring;
     restoreFuture = std::async(std::launch::async, [&] { return sessionManager.Restore(); });
+    settingsLoadFuture = std::async(std::launch::async, [settingsStore] {
+        return settingsStore.Load();
+    });
     std::string login;
     std::string password;
     std::string message = "Login or create an account";
@@ -241,6 +261,18 @@ int duel::app::Application::Run() {
         message = join ? "Joining queue..." : "Checking queue...";
     };
 
+    auto beginSettingsSave = [&] {
+        pendingBindings = settingsDraft;
+        const duel::platform::Settings settings{
+            .schemaVersion = duel::platform::kSettingsSchemaVersion,
+            .bindings = pendingBindings->All(),
+        };
+        settingsSaveFuture = std::async(std::launch::async, [settingsStore, settings] {
+            return settingsStore.Save(settings);
+        });
+        settingsMessage = "Saving settings...";
+    };
+
     auto handleQueueResult = [&](QueueResult result) {
         if (!result) {
             message = result.error;
@@ -281,6 +313,27 @@ int duel::app::Application::Run() {
     while (!WindowShouldClose()) {
         const float frameTime = GetFrameTime();
 
+        if (FutureReady(settingsLoadFuture)) {
+            auto result = settingsLoadFuture.get();
+            inputBindings = duel::game::input::InputBindings(std::move(result.settings.bindings));
+            settingsDraft = inputBindings;
+            inputSampler.SetBindings(inputBindings);
+            settingsMessage = result.warning.empty()
+                ? "Select a control to rebind"
+                : std::move(result.warning);
+            settingsLoaded = true;
+        }
+        if (FutureReady(settingsSaveFuture)) {
+            const auto result = settingsSaveFuture.get();
+            if (result && pendingBindings) {
+                inputBindings = *pendingBindings;
+                inputSampler.SetBindings(inputBindings);
+                settingsMessage = "Settings saved";
+            } else {
+                settingsMessage = "Settings save failed: " + result.error;
+            }
+            pendingBindings.reset();
+        }
         if (screen == RuntimeState::Restoring && FutureReady(restoreFuture)) {
             const auto result = restoreFuture.get();
             if (!result) {
@@ -350,6 +403,7 @@ int duel::app::Application::Run() {
         }
 
         if (screen == RuntimeState::Playing) {
+            inputSampler.Observe(inputAdapter);
             if (network) {
                 if (auto start = network->PollMatchStart()) {
                     matchStarted = true;
@@ -387,13 +441,18 @@ int duel::app::Application::Run() {
             accumulator = std::min(accumulator + frameTime, 0.25F);
             while (screen == RuntimeState::Playing && accumulator >= kSimulationStep) {
                 accumulator -= kSimulationStep;
+                const auto inputFrame = inputSampler.ConsumeFixedTick();
                 if (network && network->IsConnected() && matchStarted
                     && world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
-                    const std::int32_t moveX = static_cast<std::int32_t>(IsKeyDown(KEY_D))
-                        - static_cast<std::int32_t>(IsKeyDown(KEY_A));
-                    const std::int32_t moveY = static_cast<std::int32_t>(IsKeyDown(KEY_S))
-                        - static_cast<std::int32_t>(IsKeyDown(KEY_W));
-                    const bool attack = IsKeyDown(KEY_SPACE);
+                    const auto moveX = static_cast<std::int32_t>(inputFrame.moveX);
+                    const auto moveY = static_cast<std::int32_t>(inputFrame.moveY);
+                    const auto attackCode = inputBindings.InputFor(
+                        duel::game::input::Action::LightAttack
+                    );
+                    // Compatibility with the v1 protocol: LightAttack remains a held
+                    // boolean until action commands land in migration stage 4. Dash
+                    // edges are buffered by InputSampler but intentionally not sent.
+                    const bool attack = attackCode && inputAdapter.IsDown(*attackCode);
                     ++inputTick;
                     prediction.ApplyInput(inputTick, moveX, moveY);
                     if (attack) {
@@ -439,7 +498,8 @@ int duel::app::Application::Run() {
                 serverTickRate,
                 prediction,
                 opponentInterpolation,
-                playerVisuals
+                playerVisuals,
+                inputBindings
             );
         } else if (screen == RuntimeState::Result) {
             const auto action = screens::DrawResult(matchEnd, world, session.userId, message);
@@ -449,15 +509,56 @@ int duel::app::Application::Run() {
             } else if (action == screens::ResultAction::FindAnother) {
                 beginQueueRequest(true);
             }
+        } else if (screen == RuntimeState::Settings) {
+            const auto settingsEvent = screens::DrawSettings(
+                settingsDraft,
+                captureAction,
+                settingsMessage,
+                settingsSaveFuture.valid()
+            );
+            if (settingsEvent.captureAction) {
+                captureAction = settingsEvent.captureAction;
+                settingsMessage = "Press a key for the selected action";
+            }
+            if (captureAction) {
+                if (const auto inputCode = inputAdapter.PressedInputCode()) {
+                    std::string_view validationError;
+                    if (settingsDraft.Rebind(*captureAction, *inputCode, &validationError)) {
+                        captureAction.reset();
+                        settingsMessage = "Binding changed; save to apply";
+                    } else {
+                        settingsMessage = std::string(validationError);
+                    }
+                }
+            }
+            if (settingsEvent.action == screens::SettingsAction::Save
+                && !settingsSaveFuture.valid()) {
+                beginSettingsSave();
+            } else if (settingsEvent.action == screens::SettingsAction::ResetDefaults
+                && !settingsSaveFuture.valid()) {
+                settingsDraft = duel::game::input::InputBindings::Defaults();
+                captureAction.reset();
+                beginSettingsSave();
+            } else if (settingsEvent.action == screens::SettingsAction::Back) {
+                captureAction.reset();
+                screen = RuntimeState::Ready;
+                message = "Ready to find a match";
+            }
         } else {
             const auto action = screens::DrawMainMenu(
                 message,
                 screen == RuntimeState::Ready,
                 screen == RuntimeState::Waiting,
-                screen == RuntimeState::Error
+                screen == RuntimeState::Error,
+                settingsLoaded
             );
             if (action == screens::MainMenuAction::FindMatch) {
                 beginQueueRequest(true);
+            } else if (action == screens::MainMenuAction::Settings) {
+                settingsDraft = inputBindings;
+                captureAction.reset();
+                settingsMessage = "Select a control to rebind";
+                screen = RuntimeState::Settings;
             } else if (action == screens::MainMenuAction::Logout) {
                 const auto logout = sessionManager.Logout();
                 session = {};
