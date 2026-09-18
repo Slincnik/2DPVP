@@ -14,6 +14,17 @@ DATABASE_URL ?= postgres://pvp_duel:local_only_password@localhost:5432/pvp_duel?
 JWT_SECRET ?= local-development-jwt-secret-change-me-123
 MATCH_TICKET_SECRET ?= local-match-ticket-secret-change-me-123
 
+BUILD_ENV ?= dev
+DEV_GATEWAY_URL ?= http://localhost:8080
+PROD_GATEWAY_URL ?= https://example.invalid
+ifeq ($(BUILD_ENV),dev)
+CLIENT_GATEWAY_URL := $(DEV_GATEWAY_URL)
+else ifeq ($(BUILD_ENV),prod)
+CLIENT_GATEWAY_URL := $(PROD_GATEWAY_URL)
+else
+$(error BUILD_ENV must be dev or prod)
+endif
+
 .PHONY: all help proto client client-test server server-test \
         backend-build backend-test gateway matchserver smoke-quic \
         appimage appimage-native setup-msquic dev-cert db-up db-down db-reset clean
@@ -34,7 +45,10 @@ help:
 # The client target owns its prerequisites: a fresh checkout only needs the
 # tools listed in README.md and `make client`.
 client: proto setup-msquic
-	cmake -S client -B "$(CLIENT_BUILD_DIR)" $${CMAKE_ARGS:-}
+	cmake -S client -B "$(CLIENT_BUILD_DIR)" \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DPVP_DUEL_DEFAULT_GATEWAY_URL='$(CLIENT_GATEWAY_URL)' \
+		$${CMAKE_ARGS:-}
 	cmake --build "$(CLIENT_BUILD_DIR)" --parallel $${JOBS:-}
 
 client-test: client
