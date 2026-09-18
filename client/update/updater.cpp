@@ -1,4 +1,5 @@
-#include <httplib.h>
+#include "update/https_fetch.h"
+
 #include <openssl/evp.h>
 
 #include <array>
@@ -40,21 +41,12 @@ std::string Sha256(const std::string& data) {
 }
 
 bool Download(const std::string& url, std::string& content) {
-    constexpr std::string_view prefix = "https://";
-    if (!url.starts_with(prefix)) {
+    const auto response = duel::update::http::FetchHttps(url, 120);
+    if (!response.ok) {
+        std::cerr << "Update download failed: " << response.error << '\n';
         return false;
     }
-    const auto slash = url.find('/', prefix.size());
-    const auto host = url.substr(prefix.size(), slash - prefix.size());
-    const auto path = slash == std::string::npos ? "/" : url.substr(slash);
-    httplib::SSLClient client(host);
-    client.set_connection_timeout(10, 0);
-    client.set_read_timeout(120, 0);
-    const auto response = client.Get(path);
-    if (!response || response->status != 200) {
-        return false;
-    }
-    content = response->body;
+    content = response.body;
     return true;
 }
 

@@ -208,6 +208,7 @@ target_compile_options(duel_client_app PRIVATE -Wall -Wextra -Wpedantic)
 
 if(UNIX)
     add_executable(pvp_duel_updater update/updater.cpp)
+    target_include_directories(pvp_duel_updater PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(pvp_duel_updater PRIVATE httplib::httplib OpenSSL::Crypto)
     target_compile_options(pvp_duel_updater PRIVATE -Wall -Wextra -Wpedantic)
 endif()
@@ -224,6 +225,12 @@ set_target_properties(pvp_duel_client PROPERTIES BUILD_RPATH "${MSQUIC_LIBRARY_D
 if(UNIX AND NOT APPLE)
     target_link_options(pvp_duel_client PRIVATE "-Wl,--disable-new-dtags")
 endif()
+
+add_executable(update_https_test tests/update_https_test.cpp)
+target_include_directories(update_https_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(update_https_test PRIVATE httplib::httplib)
+target_compile_options(update_https_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME update_https_test COMMAND update_https_test)
 
 add_executable(application_test tests/application_test.cpp)
 target_link_libraries(application_test PRIVATE duel_app)

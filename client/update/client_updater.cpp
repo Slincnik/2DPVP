@@ -1,6 +1,5 @@
 #include "update/client_updater.h"
-
-#include <httplib.h>
+#include "update/https_fetch.h"
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -19,11 +18,6 @@ namespace {
 #ifndef PVP_DUEL_VERSION
 #define PVP_DUEL_VERSION "0.0.0-dev"
 #endif
-
-struct Url {
-    std::string origin;
-    std::string path;
-};
 
 std::string TrimVersion(std::string version) {
     if (!version.empty() && version.front() == 'v') {
@@ -67,22 +61,6 @@ bool IsNewer(std::string_view candidate) {
         }
     }
     return false;
-}
-
-bool ParseUrl(const std::string& value, Url& result) {
-    constexpr std::string_view https = "https://";
-    if (!value.starts_with(https)) {
-        return false;
-    }
-    const auto separator = value.find('/', https.size());
-    if (separator == std::string::npos) {
-        result.origin = value;
-        result.path = "/";
-    } else {
-        result.origin = value.substr(0, separator);
-        result.path = value.substr(separator);
-    }
-    return true;
 }
 
 std::string CurrentAppImage() {
@@ -139,22 +117,14 @@ void CheckAndStart(const std::string& manifestUrl, const std::string& executable
         return;
     }
 
-    Url manifest;
-    if (!ParseUrl(manifestUrl, manifest)) {
-        std::cerr << "Skipping update check: manifest URL must use HTTPS\n";
-        return;
-    }
-
-    httplib::SSLClient client(manifest.origin.substr(std::string("https://").size()));
-    client.set_connection_timeout(2, 0);
-    client.set_read_timeout(3, 0);
-    const auto response = client.Get(manifest.path);
-    if (!response || response->status != 200) {
+    const auto response = http::FetchHttps(manifestUrl, 3);
+    if (!response.ok) {
+        std::cerr << "Skipping update check: " << response.error << '\n';
         return;
     }
 
     try {
-        const auto body = nlohmann::json::parse(response->body);
+        const auto body = nlohmann::json::parse(response.body);
         const auto version = body.at("version").get<std::string>();
         const auto platform =
 #ifdef __APPLE__
@@ -165,14 +135,26 @@ void CheckAndStart(const std::string& manifestUrl, const std::string& executable
         const auto release = body.at("platforms").at(platform);
         const auto url = release.at("url").get<std::string>();
         const auto sha256 = release.at("sha256").get<std::string>();
-        if (!IsNewer(version) || sha256.size() != 64 || !StartUpdater(url, sha256, executablePath)) {
+        if (!IsNewer(version)) {
+            return;
+        }
+        if (sha256.size() != 64) {
+            std::cerr << "Skipping update: manifest contains an invalid checksum\n";
+            return;
+        }
+        http::Url artifactUrl;
+        if (!http::ParseHttpsUrl(url, artifactUrl)) {
+            std::cerr << "Skipping update: artifact URL is not HTTPS\n";
+            return;
+        }
+        if (!StartUpdater(url, sha256, executablePath)) {
+            std::cerr << "Update available, but automatic updater could not be started\n";
             return;
         }
         std::cerr << "Updating client to " << version << "...\n";
         std::exit(0);
     } catch (const std::exception&) {
-        // A malformed or unavailable manifest must never prevent the client
-        // from starting.
+        std::cerr << "Skipping update check: manifest response was invalid\n";
     }
 }
 
