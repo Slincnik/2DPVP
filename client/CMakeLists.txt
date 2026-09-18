@@ -159,8 +159,16 @@ target_include_directories(duel_net SYSTEM PRIVATE "${MSQUIC_INCLUDE_DIR}")
 target_link_libraries(duel_net PUBLIC duel_protocol PRIVATE "${MSQUIC_LIBRARY}" ${XDP_LIBRARIES})
 target_compile_options(duel_net PRIVATE -Wall -Wextra -Wpedantic)
 
+add_library(duel_client_app STATIC
+    app/application_runtime.cpp
+    app/screens/client_screens.cpp
+)
+target_include_directories(duel_client_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(duel_client_app PUBLIC duel_app PRIVATE raylib duel_api duel_game duel_net)
+target_compile_options(duel_client_app PRIVATE -Wall -Wextra -Wpedantic)
+
 add_executable(pvp_duel_client app/main.cpp)
-target_link_libraries(pvp_duel_client PRIVATE raylib duel_api duel_game duel_net)
+target_link_libraries(pvp_duel_client PRIVATE duel_client_app)
 target_compile_definitions(pvp_duel_client PRIVATE
     PVP_DUEL_DEFAULT_GATEWAY_URL="${PVP_DUEL_DEFAULT_GATEWAY_URL}"
 )

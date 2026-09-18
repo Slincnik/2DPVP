@@ -36,8 +36,17 @@ Application::Application(std::unique_ptr<Screen> initialScreen)
     currentScreen_->OnEnter();
 }
 
+Application::Application(std::string gatewayUrl)
+    : gatewayUrl_(std::move(gatewayUrl)) {
+    if (gatewayUrl_.empty()) {
+        throw std::invalid_argument("Application requires a gateway URL");
+    }
+}
+
 Application::~Application() {
-    currentScreen_->OnExit();
+    if (currentScreen_) {
+        currentScreen_->OnExit();
+    }
 }
 
 ScreenId Application::CurrentScreenId() const noexcept {

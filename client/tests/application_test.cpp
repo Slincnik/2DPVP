@@ -120,10 +120,20 @@ void TestRejectedTransitionKeepsCurrentScreen() {
 
 void TestInitialScreenIsRequired() {
     try {
-        duel::app::Application application(nullptr);
+        duel::app::Application application(std::unique_ptr<duel::app::Screen>{});
         Require(false);
     } catch (const std::invalid_argument&) {
     }
+}
+
+void TestGatewayUrlIsRequired() {
+    try {
+        duel::app::Application application(std::string{});
+        Require(false);
+    } catch (const std::invalid_argument&) {
+    }
+
+    duel::app::Application application("http://localhost:8080");
 }
 
 } // namespace
@@ -133,6 +143,7 @@ int main() {
     TestApplicationLifecycle();
     TestRejectedTransitionKeepsCurrentScreen();
     TestInitialScreenIsRequired();
+    TestGatewayUrlIsRequired();
 
     FakeWindow window;
     Require(!window.ShouldClose());
