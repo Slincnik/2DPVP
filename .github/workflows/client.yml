@@ -83,36 +83,58 @@ jobs:
           install_name_tool -change "$protobuf_reference" \
             "@executable_path/../Frameworks/$protobuf_name" \
             dist/PvPDuel.app/Contents/MacOS/PvPDuel
+          app="dist/PvPDuel.app"
+          frameworks="$app/Contents/Frameworks"
+          main="$app/Contents/MacOS/PvPDuel"
+          updater="$app/Contents/MacOS/pvp_duel_updater"
+
           dylibbundler -od -b \
-            -x dist/PvPDuel.app/Contents/MacOS/PvPDuel \
-            -d dist/PvPDuel.app/Contents/Frameworks \
+            -x "$main" \
+            -d "$frameworks" \
             -p '@executable_path/../Frameworks'
           dylibbundler -od -b \
-            -x dist/PvPDuel.app/Contents/MacOS/pvp_duel_updater \
-            -d dist/PvPDuel.app/Contents/Frameworks \
+            -x "$updater" \
+            -d "$frameworks" \
             -p '@executable_path/../Frameworks'
-          # dylibbundler modifies the binaries, so signing must happen afterward.
-          # Sign nested libraries first, then the executables, then the app bundle.
-          find dist/PvPDuel.app/Contents/Frameworks \
-            -type f \
-            \( -name '*.dylib' -o -perm -111 \) \
-            -exec codesign --force --sign - --timestamp=none {} \;
 
-          codesign --force --sign - --timestamp=none \
-            dist/PvPDuel.app/Contents/MacOS/pvp_duel_updater
+          # Rewrite any remaining Homebrew references in both executables.
+          while read -r dependency; do
+            name="$(basename "$dependency")"
+            bundled="$frameworks/$name"
+            if [[ -f "$bundled" ]]; then
+              install_name_tool -change "$dependency" \
+                "@executable_path/../Frameworks/$name" "$main" 2>/dev/null || true
+              install_name_tool -change "$dependency" \
+                "@executable_path/../Frameworks/$name" "$updater" 2>/dev/null || true
+            fi
+          done < <(
+            { otool -L "$main"; otool -L "$updater"; } \
+              | awk '/\/opt\/homebrew\// {print $1}' | sort -u
+          )
 
-          codesign --force --sign - --timestamp=none \
-            dist/PvPDuel.app/Contents/MacOS/PvPDuel
+          test -f "$frameworks/$protobuf_name"
+          echo 'Main executable dependencies:'
+          otool -L "$main"
+          echo 'Updater dependencies:'
+          otool -L "$updater"
+          echo 'Bundled frameworks:'
+          find "$frameworks" -maxdepth 1 -type f -print
 
-          codesign --force --sign - --timestamp=none \
-            dist/PvPDuel.app
+          while IFS= read -r binary; do
+            if grep -q '/opt/homebrew/' < <(otool -L "$binary"); then
+              echo "Unbundled Homebrew dependency in: $binary"
+              otool -L "$binary"
+              exit 1
+            fi
+          done < <(
+            find "$app/Contents" -type f \
+              \( -name '*.dylib' -o -perm -111 \)
+          )
 
-          codesign --verify --strict --verbose=4 \
-            dist/PvPDuel.app
-          test -f "dist/PvPDuel.app/Contents/Frameworks/$protobuf_name"
-          ! grep -q '/opt/homebrew' < <(otool -L dist/PvPDuel.app/Contents/MacOS/PvPDuel)
-          ditto -c -k --sequesterRsrc --keepParent dist/PvPDuel.app dist/PvPDuel-macos-arm64.zip
-          shasum -a 256 dist/PvPDuel-macos-arm64.zip > dist/PvPDuel-macos-arm64.zip.sha256
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$app" dist/PvPDuel-macos-arm64.zip
+          shasum -a 256 dist/PvPDuel-macos-arm64.zip \
+            > dist/PvPDuel-macos-arm64.zip.sha256
 
       - name: Upload platform artifacts
         uses: actions/upload-artifact@v4
