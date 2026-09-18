@@ -1,20 +1,17 @@
 #pragma once
 
+#include "game/match/match_transport.h"
+
 #include <cstdint>
 #include <memory>
-#include <optional>
-#include <span>
 #include <string>
-
-#include "game/input/input.h"
-#include "game/v1/duel.pb.h"
 
 namespace duel::net {
 
-class QuicClient {
+class QuicClient final : public game::match::MatchTransport {
 public:
     QuicClient();
-    ~QuicClient();
+    ~QuicClient() override;
 
     QuicClient(const QuicClient&) = delete;
     QuicClient& operator=(const QuicClient&) = delete;
@@ -25,17 +22,13 @@ public:
         const std::string& matchToken,
         const std::string& playerId
     );
-    bool SendInput(
-        std::uint32_t tick,
-        std::int32_t moveX,
-        std::int32_t moveY,
-        std::span<const game::input::ActionCommand> pendingActions
-    );
-    std::optional<::game::v1::MatchStart> PollMatchStart();
-    std::optional<::game::v1::WorldSnapshot> PollSnapshot();
-    std::optional<::game::v1::MatchEnd> PollMatchEnd();
-    std::string Error() const;
-    bool IsConnected() const;
+
+    [[nodiscard]] bool SendInput(const protocol::PlayerInput& input) override;
+    [[nodiscard]] std::optional<protocol::MatchStart> PollMatchStart() override;
+    [[nodiscard]] std::optional<protocol::WorldSnapshot> PollSnapshot() override;
+    [[nodiscard]] std::optional<protocol::MatchEnd> PollMatchEnd() override;
+    [[nodiscard]] std::string Error() const override;
+    [[nodiscard]] bool IsConnected() const override;
 
 private:
     class Impl;

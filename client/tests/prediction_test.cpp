@@ -24,10 +24,10 @@ int main() {
     passed &= Expect(prediction.Position().y == -10, "prediction must apply both axes");
     passed &= Expect(prediction.PendingInputCount() == 2, "inputs must remain pending before acknowledgement");
 
-    game::v1::PlayerState authoritative;
-    authoritative.set_position_x(8);
-    authoritative.set_position_y(0);
-    authoritative.set_last_acked_input_tick(1);
+    duel::protocol::PlayerState authoritative;
+    authoritative.positionX = 8;
+    authoritative.positionY = 0;
+    authoritative.lastAckedInputTick = 1;
     prediction.Reconcile(authoritative);
 
     passed &= Expect(prediction.Position().x == 18, "reconciliation must replay unacknowledged input");

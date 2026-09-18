@@ -5,9 +5,9 @@
 #include "auth/secure_storage.h"
 #include "auth/session_manager.h"
 #include "game/input/input.h"
-#include "game/interpolation.h"
+#include "game/match/match_controller.h"
 #include "game/match_lifecycle.h"
-#include "game/prediction.h"
+#include "game/presentation/match_presentation.h"
 #include "net/quic_client.h"
 #include "platform/raylib_input.h"
 #include "platform/settings_store.h"
@@ -31,10 +31,6 @@
 namespace {
 
 constexpr float kSimulationStep = 1.0F / 30.0F;
-constexpr float kAttackFlashDuration = 0.18F;
-constexpr float kHitFlashDuration = 0.35F;
-constexpr float kDamageTextDuration = 0.65F;
-constexpr float kAttackFeedbackCooldown = 0.5F;
 constexpr float kTwoPi = 6.28318530718F;
 
 using AuthResult = duel::api::Result<duel::api::AuthSession>;
@@ -58,8 +54,6 @@ struct Endpoint {
     std::string host;
     std::uint16_t port = 0;
 };
-
-using duel::app::screens::PlayerVisualState;
 
 std::optional<Endpoint> ParseEndpoint(const std::string& address) {
     const auto separator = address.rfind(':');
@@ -132,6 +126,8 @@ int duel::app::Application::Run() {
     auto secureStorage = duel::auth::CreateSecureStorage();
     duel::auth::SessionManager sessionManager(gateway, *secureStorage, gatewayUrl_);
     std::unique_ptr<duel::net::QuicClient> network;
+    duel::game::presentation::MatchPresentation matchPresentation;
+    std::unique_ptr<duel::game::match::MatchController> matchController;
     duel::api::AuthSession session;
     std::future<AuthResult> authFuture;
     std::future<duel::api::Result<bool>> restoreFuture;
@@ -146,7 +142,6 @@ int duel::app::Application::Run() {
     std::optional<duel::game::input::InputBindings> pendingBindings;
     duel::platform::RaylibInputAdapter inputAdapter;
     duel::game::input::InputSampler inputSampler(inputBindings);
-    duel::game::input::PendingActionQueue pendingActions;
     std::optional<duel::game::input::Action> captureAction;
     std::string settingsMessage = "Loading settings...";
     bool settingsLoaded = false;
@@ -161,69 +156,10 @@ int duel::app::Application::Run() {
     std::string message = "Login or create an account";
     bool loginActive = true;
     bool passwordActive = false;
-    bool matchStarted = false;
     bool queueRequestReset = false;
     duel::game::MatchmakingCleanup matchmakingCleanup;
-    std::uint32_t serverTickRate = 30;
     auto nextPoll = std::chrono::steady_clock::now();
-
-    ::game::v1::WorldSnapshot world;
-    ::game::v1::MatchEnd matchEnd;
-    duel::game::Prediction prediction;
-    duel::game::InterpolationBuffer opponentInterpolation;
-    std::unordered_map<std::string, PlayerVisualState> playerVisuals;
-    std::uint32_t inputTick = 0;
     float accumulator = 0.0F;
-    float localAttackSoundCooldown = 0.0F;
-
-    auto resetPlayerVisuals = [&] {
-        playerVisuals.clear();
-    };
-
-    auto seedPlayerVisuals = [&](const ::game::v1::WorldSnapshot& snapshot) {
-        for (const auto& player : snapshot.players()) {
-            playerVisuals[player.player_id()].hp = player.hp();
-        }
-    };
-
-    auto updatePlayerVisuals = [&](const ::game::v1::WorldSnapshot& snapshot) {
-        // Create all entries before retaining references into unordered_map: an
-        // insertion during hit processing could otherwise rehash and invalidate
-        // the current player's reference.
-        for (const auto& player : snapshot.players()) {
-            playerVisuals.try_emplace(player.player_id());
-        }
-        for (const auto& player : snapshot.players()) {
-            auto& visual = playerVisuals.at(player.player_id());
-            if (visual.hp >= 0 && player.hp() < visual.hp) {
-                visual.damage = visual.hp - player.hp();
-                visual.hitFlash = kHitFlashDuration;
-                visual.damageText = kDamageTextDuration;
-                if (audioReady && SoundReady(hitSound)) {
-                    PlaySound(hitSound);
-                }
-                for (const auto& attacker : snapshot.players()) {
-                    if (attacker.player_id() != player.player_id()) {
-                        auto& attackerVisual = playerVisuals.at(attacker.player_id());
-                        attackerVisual.attackFlash = std::max(
-                            attackerVisual.attackFlash,
-                            kAttackFlashDuration
-                        );
-                    }
-                }
-            }
-            visual.hp = player.hp();
-        }
-    };
-
-    auto tickPlayerVisuals = [&](float deltaSeconds) {
-        for (auto& entry : playerVisuals) {
-            auto& visual = entry.second;
-            visual.attackFlash = std::max(0.0F, visual.attackFlash - deltaSeconds);
-            visual.hitFlash = std::max(0.0F, visual.hitFlash - deltaSeconds);
-            visual.damageText = std::max(0.0F, visual.damageText - deltaSeconds);
-        }
-    };
 
     auto beginAuth = [&](bool registration) {
         if (login.empty() || password.empty()) {
@@ -245,8 +181,9 @@ int duel::app::Application::Run() {
         const bool resetCompletedMatch = join && matchmakingCleanup.QueueResetRequired();
         queueRequestReset = resetCompletedMatch;
         if (join) {
-            // Dispose callbacks and transport state from the previous attempt
-            // before its queue entry is removed and a new ticket is requested.
+            // Controller references the transport, so release it before replacing
+            // callbacks and transport state from the previous attempt.
+            matchController.reset();
             network.reset();
         }
         queueFuture = std::async(std::launch::async, [&, join, resetCompletedMatch] {
@@ -384,17 +321,12 @@ int duel::app::Application::Run() {
         }
         if (screen == RuntimeState::ConnectPending && FutureReady(connectFuture)) {
             if (connectFuture.get()) {
-                world.Clear();
-                prediction = duel::game::Prediction{};
-                opponentInterpolation = duel::game::InterpolationBuffer{};
-                resetPlayerVisuals();
-                inputTick = 0;
-                pendingActions.Reset();
+                matchController = std::make_unique<duel::game::match::MatchController>(
+                    session.userId,
+                    *network,
+                    matchPresentation
+                );
                 accumulator = 0.0F;
-                localAttackSoundCooldown = 0.0F;
-                matchStarted = false;
-                matchEnd.Clear();
-                serverTickRate = 30;
                 message = "Waiting for match start...";
                 screen = RuntimeState::Playing;
             } else {
@@ -404,71 +336,41 @@ int duel::app::Application::Run() {
             }
         }
 
-        if (screen == RuntimeState::Playing) {
+        if (screen == RuntimeState::Playing && matchController) {
             inputSampler.Observe(inputAdapter);
-            if (network) {
-                if (auto start = network->PollMatchStart()) {
-                    matchStarted = true;
-                    serverTickRate = start->tick_rate();
-                    world = start->initial_snapshot();
-                    seedPlayerVisuals(world);
-                    message = "Match starting";
+            const auto update = matchController->PollNetwork();
+            if (update.started) {
+                message = "Match starting";
+            }
+            for (const auto& event : matchPresentation.DrainEvents()) {
+                if (event.type == duel::game::presentation::PresentationEventType::AttackStarted
+                    && audioReady && SoundReady(attackSound)) {
+                    PlaySound(attackSound);
+                } else if (event.type
+                        == duel::game::presentation::PresentationEventType::PlayerHit
+                    && audioReady && SoundReady(hitSound)) {
+                    PlaySound(hitSound);
                 }
-                if (auto snapshot = network->PollSnapshot()) {
-                    updatePlayerVisuals(*snapshot);
-                    world = std::move(*snapshot);
-                    for (const auto& player : world.players()) {
-                        if (player.player_id() == session.userId) {
-                            pendingActions.Acknowledge(player.last_acked_action_sequence());
-                            prediction.Reconcile(player);
-                        } else {
-                            opponentInterpolation.Push(
-                                world.server_tick(), player.position_x(), player.position_y());
-                        }
-                    }
-                }
-                if (auto end = network->PollMatchEnd()) {
-                    matchEnd = std::move(*end);
-                    updatePlayerVisuals(matchEnd.final_snapshot());
-                    world = matchEnd.final_snapshot();
-                    matchmakingCleanup.MatchEnded();
-                    screen = RuntimeState::Result;
-                    message = duel::game::MatchFinishReasonLabel(matchEnd.reason());
-                } else if (!network->IsConnected()) {
-                    matchmakingCleanup.ConnectionFailed();
-                    message = "Network error: " + network->Error();
-                    screen = RuntimeState::Error;
-                }
+            }
+            if (update.ended) {
+                matchmakingCleanup.MatchEnded();
+                screen = RuntimeState::Result;
+                message = duel::game::MatchFinishReasonLabel(
+                    matchController->Model().End()->reason
+                );
+            } else if (update.disconnected) {
+                matchmakingCleanup.ConnectionFailed();
+                message = "Network error: " + network->Error();
+                screen = RuntimeState::Error;
             }
 
             accumulator = std::min(accumulator + frameTime, 0.25F);
             while (screen == RuntimeState::Playing && accumulator >= kSimulationStep) {
                 accumulator -= kSimulationStep;
                 const auto inputFrame = inputSampler.ConsumeFixedTick();
-                if (network && network->IsConnected() && matchStarted
-                    && world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
-                    const auto moveX = static_cast<std::int32_t>(inputFrame.moveX);
-                    const auto moveY = static_cast<std::int32_t>(inputFrame.moveY);
-                    for (const auto action : inputFrame.pressed) {
-                        if (pendingActions.Enqueue(action)
-                            && action == duel::game::input::Action::LightAttack
-                            && localAttackSoundCooldown <= 0.0F) {
-                            playerVisuals[session.userId].attackFlash = kAttackFlashDuration;
-                            if (audioReady && SoundReady(attackSound)) {
-                                PlaySound(attackSound);
-                            }
-                            localAttackSoundCooldown = kAttackFeedbackCooldown;
-                        }
-                    }
-                    ++inputTick;
-                    prediction.ApplyInput(inputTick, moveX, moveY);
-                    network->SendInput(inputTick, moveX, moveY, pendingActions.Pending());
-                }
+                static_cast<void>(matchController->FixedTick(inputFrame));
             }
-            prediction.AdvanceVisual(std::min(frameTime * 12.0F, 1.0F));
-            opponentInterpolation.Advance(frameTime);
-            tickPlayerVisuals(frameTime);
-            localAttackSoundCooldown = std::max(0.0F, localAttackSoundCooldown - frameTime);
+            matchController->AdvanceFrame(frameTime);
         }
 
         BeginDrawing();
@@ -488,18 +390,10 @@ int duel::app::Application::Run() {
             } else if (action == screens::LoginAction::Register) {
                 beginAuth(true);
             }
-        } else if (screen == RuntimeState::Playing) {
-            screens::DrawMatch(
-                world,
-                session.userId,
-                serverTickRate,
-                prediction,
-                opponentInterpolation,
-                playerVisuals,
-                inputBindings
-            );
-        } else if (screen == RuntimeState::Result) {
-            const auto action = screens::DrawResult(matchEnd, world, session.userId, message);
+        } else if (screen == RuntimeState::Playing && matchController) {
+            screens::DrawMatch(matchController->Model(), matchPresentation, inputBindings);
+        } else if (screen == RuntimeState::Result && matchController) {
+            const auto action = screens::DrawResult(matchController->Model(), message);
             if (action == screens::ResultAction::BackToMenu) {
                 screen = RuntimeState::Ready;
                 message = "Ready to find a match";

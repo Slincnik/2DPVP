@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-#include "game/v1/duel.pb.h"
+#include "protocol/match_protocol.h"
 
 namespace duel::game {
 
@@ -20,7 +20,7 @@ private:
 };
 
 std::uint32_t TicksToDisplaySeconds(std::uint32_t ticks, std::uint32_t tickRate);
-std::string MatchResultLabel(const ::game::v1::MatchEnd& matchEnd, const std::string& playerId);
-std::string MatchFinishReasonLabel(::game::v1::MatchFinishReason reason);
+std::string MatchResultLabel(const protocol::MatchEnd& matchEnd, const std::string& playerId);
+std::string MatchFinishReasonLabel(protocol::MatchFinishReason reason);
 
 } // namespace duel::game

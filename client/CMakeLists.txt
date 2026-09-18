@@ -120,6 +120,11 @@ add_library(duel_protocol STATIC proto/game/v1/duel.pb.cc)
 target_include_directories(duel_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/proto")
 target_link_libraries(duel_protocol PUBLIC protobuf::libprotobuf ${PROTOBUF_PLATFORM_LIBS})
 
+add_library(duel_match_protocol STATIC protocol/match_protocol_adapter.cpp)
+target_include_directories(duel_match_protocol PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(duel_match_protocol PRIVATE duel_protocol)
+target_compile_options(duel_match_protocol PRIVATE -Wall -Wextra -Wpedantic)
+
 add_library(duel_app STATIC app/application.cpp)
 target_include_directories(duel_app PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_options(duel_app PRIVATE -Wall -Wextra -Wpedantic)
@@ -133,9 +138,16 @@ target_include_directories(duel_settings PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(duel_settings PUBLIC duel_input PRIVATE nlohmann_json::nlohmann_json)
 target_compile_options(duel_settings PRIVATE -Wall -Wextra -Wpedantic)
 
-add_library(duel_game STATIC game/prediction.cpp game/interpolation.cpp game/match_lifecycle.cpp)
+add_library(duel_game STATIC
+    game/prediction.cpp
+    game/interpolation.cpp
+    game/match_lifecycle.cpp
+    game/match/match_model.cpp
+    game/match/match_controller.cpp
+    game/presentation/match_presentation.cpp
+)
 target_include_directories(duel_game PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(duel_game PUBLIC duel_protocol)
+target_link_libraries(duel_game PUBLIC duel_input)
 target_compile_options(duel_game PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(duel_api STATIC api/gateway_client.cpp auth/secure_storage.cpp auth/session_manager.cpp)
@@ -165,7 +177,9 @@ target_compile_options(duel_api PRIVATE -Wall -Wextra -Wpedantic)
 add_library(duel_net STATIC net/quic_client.cpp)
 target_include_directories(duel_net PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_include_directories(duel_net SYSTEM PRIVATE "${MSQUIC_INCLUDE_DIR}")
-target_link_libraries(duel_net PUBLIC duel_protocol PRIVATE "${MSQUIC_LIBRARY}" ${XDP_LIBRARIES})
+target_link_libraries(duel_net PUBLIC duel_match_protocol PRIVATE
+    duel_protocol "${MSQUIC_LIBRARY}" ${XDP_LIBRARIES}
+)
 target_compile_options(duel_net PRIVATE -Wall -Wextra -Wpedantic)
 
 add_library(duel_client_app STATIC
@@ -204,6 +218,16 @@ add_executable(settings_store_test tests/settings_store_test.cpp)
 target_link_libraries(settings_store_test PRIVATE duel_settings)
 target_compile_options(settings_store_test PRIVATE -Wall -Wextra -Wpedantic)
 add_test(NAME settings_store_test COMMAND settings_store_test)
+
+add_executable(match_controller_test tests/match_controller_test.cpp)
+target_link_libraries(match_controller_test PRIVATE duel_game)
+target_compile_options(match_controller_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME match_controller_test COMMAND match_controller_test)
+
+add_executable(match_presentation_test tests/match_presentation_test.cpp)
+target_link_libraries(match_presentation_test PRIVATE duel_game)
+target_compile_options(match_presentation_test PRIVATE -Wall -Wextra -Wpedantic)
+add_test(NAME match_presentation_test COMMAND match_presentation_test)
 
 add_executable(prediction_test tests/prediction_test.cpp)
 target_link_libraries(prediction_test PRIVATE duel_game)

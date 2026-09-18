@@ -19,13 +19,13 @@ int main() {
     assert(duel::game::TicksToDisplaySeconds(30, 30) == 1);
     assert(duel::game::TicksToDisplaySeconds(31, 30) == 2);
 
-    ::game::v1::MatchEnd end;
+    duel::protocol::MatchEnd end;
     assert(duel::game::MatchResultLabel(end, "alice") == "DRAW");
-    end.set_winner_player_id("alice");
+    end.winnerPlayerId = "alice";
     assert(duel::game::MatchResultLabel(end, "alice") == "YOU WIN");
     assert(duel::game::MatchResultLabel(end, "bob") == "YOU LOSE");
-    assert(duel::game::MatchFinishReasonLabel(::game::v1::MATCH_FINISH_REASON_KO) == "Knockout");
-    assert(duel::game::MatchFinishReasonLabel(::game::v1::MATCH_FINISH_REASON_TIME_LIMIT) == "Time limit");
-    assert(duel::game::MatchFinishReasonLabel(::game::v1::MATCH_FINISH_REASON_DISCONNECT) == "Opponent disconnected");
+    assert(duel::game::MatchFinishReasonLabel(duel::protocol::MatchFinishReason::KO) == "Knockout");
+    assert(duel::game::MatchFinishReasonLabel(duel::protocol::MatchFinishReason::TimeLimit) == "Time limit");
+    assert(duel::game::MatchFinishReasonLabel(duel::protocol::MatchFinishReason::Disconnect) == "Opponent disconnected");
     return 0;
 }

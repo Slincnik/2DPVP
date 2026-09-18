@@ -31,12 +31,12 @@ void Prediction::ApplyInput(std::uint32_t tick, std::int32_t moveX, std::int32_t
     }
 }
 
-void Prediction::Reconcile(const ::game::v1::PlayerState& authoritative) {
-    while (!pending_.empty() && pending_.front().tick <= authoritative.last_acked_input_tick()) {
+void Prediction::Reconcile(const protocol::PlayerState& authoritative) {
+    while (!pending_.empty() && pending_.front().tick <= authoritative.lastAckedInputTick) {
         pending_.pop_front();
     }
 
-    predicted_ = PredictedPosition{authoritative.position_x(), authoritative.position_y()};
+    predicted_ = PredictedPosition{authoritative.positionX, authoritative.positionY};
     for (const auto& input : pending_) {
         ApplyMovement(predicted_, input.moveX, input.moveY);
     }

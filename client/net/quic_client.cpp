@@ -1,5 +1,8 @@
 #include "net/quic_client.h"
 
+#include "game/v1/duel.pb.h"
+#include "protocol/match_protocol_adapter.h"
+
 #include <msquic.h>
 
 #include <algorithm>
@@ -27,17 +30,6 @@ struct SendContext {
     std::vector<std::uint8_t> bytes;
     QUIC_BUFFER buffer{};
 };
-
-::game::v1::ActionType ProtocolActionType(game::input::Action action) noexcept {
-    switch (action) {
-    case game::input::Action::Dash:
-        return ::game::v1::ACTION_TYPE_DASH;
-    case game::input::Action::LightAttack:
-        return ::game::v1::ACTION_TYPE_LIGHT_ATTACK;
-    default:
-        return ::game::v1::ACTION_TYPE_UNSPECIFIED;
-    }
-}
 
 std::vector<std::uint8_t> Serialize(const google::protobuf::MessageLite& message) {
     const auto payloadSize = message.ByteSizeLong();
@@ -145,30 +137,11 @@ public:
         return connected_;
     }
 
-    bool SendInput(
-        std::uint32_t tick,
-        std::int32_t moveX,
-        std::int32_t moveY,
-        std::span<const game::input::ActionCommand> pendingActions
-    ) {
-        ::game::v1::PlayerInput input;
-        input.set_tick(tick);
-        input.set_move_x(moveX);
-        input.set_move_y(moveY);
-        const auto commandCount = std::min(
-            pendingActions.size(),
-            game::input::PendingActionQueue::kMaximumSize
-        );
-        for (std::size_t index = 0; index < commandCount; ++index) {
-            const auto& command = pendingActions[index];
-            auto* protocolCommand = input.add_pending_actions();
-            protocolCommand->set_sequence(command.sequence);
-            protocolCommand->set_type(ProtocolActionType(command.action));
-        }
-        return SendDatagram(input);
+    bool SendInput(const protocol::PlayerInput& input) {
+        return SendDatagram(protocol::ToProtobuf(input));
     }
 
-    std::optional<::game::v1::MatchStart> PollMatchStart() {
+    std::optional<protocol::MatchStart> PollMatchStart() {
         std::scoped_lock lock(mutex_);
         if (!matchStart_) {
             return std::nullopt;
@@ -178,7 +151,7 @@ public:
         return start;
     }
 
-    std::optional<::game::v1::WorldSnapshot> PollSnapshot() {
+    std::optional<protocol::WorldSnapshot> PollSnapshot() {
         std::scoped_lock lock(mutex_);
         if (snapshots_.empty()) {
             return std::nullopt;
@@ -188,7 +161,7 @@ public:
         return snapshot;
     }
 
-    std::optional<::game::v1::MatchEnd> PollMatchEnd() {
+    std::optional<protocol::MatchEnd> PollMatchEnd() {
         std::scoped_lock lock(mutex_);
         if (!matchEnd_) {
             return std::nullopt;
@@ -403,13 +376,13 @@ private:
                 UpdateConnected();
             }
             if (envelope.has_match_start()) {
-                matchStart_ = envelope.match_start();
+                matchStart_ = protocol::FromProtobuf(envelope.match_start());
             }
             if (envelope.has_snapshot()) {
-                snapshots_.push_back(envelope.snapshot());
+                snapshots_.push_back(protocol::FromProtobuf(envelope.snapshot()));
             }
             if (envelope.has_match_end()) {
-                matchEnd_ = envelope.match_end();
+                matchEnd_ = protocol::FromProtobuf(envelope.match_end());
                 matchEnded_ = true;
             }
         }
@@ -424,7 +397,7 @@ private:
             return;
         }
         std::scoped_lock lock(mutex_);
-        snapshots_.push_back(std::move(snapshot));
+        snapshots_.push_back(protocol::FromProtobuf(snapshot));
     }
 
     void UpdateConnected() {
@@ -503,9 +476,9 @@ private:
     std::string matchToken_;
     std::string playerId_;
     std::vector<std::uint8_t> receiveBuffer_;
-    std::optional<::game::v1::MatchStart> matchStart_;
-    std::deque<::game::v1::WorldSnapshot> snapshots_;
-    std::optional<::game::v1::MatchEnd> matchEnd_;
+    std::optional<protocol::MatchStart> matchStart_;
+    std::deque<protocol::WorldSnapshot> snapshots_;
+    std::optional<protocol::MatchEnd> matchEnd_;
 };
 
 QuicClient::QuicClient() : impl_(std::make_unique<Impl>()) {}
@@ -520,24 +493,19 @@ bool QuicClient::Connect(
     return impl_->Connect(host, port, matchToken, playerId);
 }
 
-bool QuicClient::SendInput(
-    std::uint32_t tick,
-    std::int32_t moveX,
-    std::int32_t moveY,
-    std::span<const game::input::ActionCommand> pendingActions
-) {
-    return impl_->SendInput(tick, moveX, moveY, pendingActions);
+bool QuicClient::SendInput(const protocol::PlayerInput& input) {
+    return impl_->SendInput(input);
 }
 
-std::optional<::game::v1::MatchStart> QuicClient::PollMatchStart() {
+std::optional<protocol::MatchStart> QuicClient::PollMatchStart() {
     return impl_->PollMatchStart();
 }
 
-std::optional<::game::v1::WorldSnapshot> QuicClient::PollSnapshot() {
+std::optional<protocol::WorldSnapshot> QuicClient::PollSnapshot() {
     return impl_->PollSnapshot();
 }
 
-std::optional<::game::v1::MatchEnd> QuicClient::PollMatchEnd() {
+std::optional<protocol::MatchEnd> QuicClient::PollMatchEnd() {
     return impl_->PollMatchEnd();
 }
 

@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <deque>
 
-#include "game/v1/duel.pb.h"
+#include "protocol/match_protocol.h"
 
 namespace duel::game {
 
@@ -15,7 +15,7 @@ struct PredictedPosition {
 class Prediction {
 public:
     void ApplyInput(std::uint32_t tick, std::int32_t moveX, std::int32_t moveY);
-    void Reconcile(const ::game::v1::PlayerState& authoritative);
+    void Reconcile(const protocol::PlayerState& authoritative);
     void AdvanceVisual(float blend);
 
     PredictedPosition Position() const;

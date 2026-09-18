@@ -59,10 +59,10 @@ void TextField(Rectangle bounds, const char* label, std::string& value, bool& ac
     DrawText(visible.c_str(), static_cast<int>(bounds.x + 10), static_cast<int>(bounds.y + 11), 20, RAYWHITE);
 }
 
-Vector2 ScreenPosition(const ::game::v1::PlayerState& player) {
+Vector2 ScreenPosition(const protocol::PlayerState& player) {
     return Vector2{
-        kArenaCenter.x + static_cast<float>(player.position_x()) * kWorldScale,
-        kArenaCenter.y + static_cast<float>(player.position_y()) * kWorldScale,
+        kArenaCenter.x + static_cast<float>(player.positionX) * kWorldScale,
+        kArenaCenter.y + static_cast<float>(player.positionY) * kWorldScale,
     };
 }
 
@@ -71,18 +71,26 @@ Color WithAlpha(Color color, float alpha) {
     return color;
 }
 
-Vector2 FacingDirection(const ::game::v1::PlayerState& player) {
+Vector2 FacingDirection(const protocol::PlayerState& player) {
     return Vector2{
-        static_cast<float>(player.facing_x()),
-        static_cast<float>(player.facing_y()),
+        static_cast<float>(player.facingX),
+        static_cast<float>(player.facingY),
     };
 }
 
-void DrawAttackPulse(const ::game::v1::PlayerState& player, const PlayerVisualState& visual) {
-    if (visual.attackFlash <= 0.0F) {
+void DrawAttackPulse(
+    const protocol::PlayerState& player,
+    const game::presentation::PlayerPresentation& visual
+) {
+    const bool authoritativeAttack =
+        visual.animation == game::presentation::AnimationState::AttackWindup
+        || visual.animation == game::presentation::AnimationState::AttackActive;
+    if (visual.attackFlashSeconds <= 0.0F && !authoritativeAttack) {
         return;
     }
-    const float remaining = std::clamp(visual.attackFlash / kAttackFlashDuration, 0.0F, 1.0F);
+    const float remaining = visual.attackFlashSeconds > 0.0F
+        ? std::clamp(visual.attackFlashSeconds / kAttackFlashDuration, 0.0F, 1.0F)
+        : 1.0F;
     const float progress = 1.0F - remaining;
     const auto position = ScreenPosition(player);
     const auto direction = FacingDirection(player);
@@ -106,13 +114,20 @@ void DrawAttackPulse(const ::game::v1::PlayerState& player, const PlayerVisualSt
     );
 }
 
-void DrawHitFlash(const ::game::v1::PlayerState& player, const PlayerVisualState& visual) {
-    if (visual.hitFlash <= 0.0F && visual.damageText <= 0.0F) {
+void DrawHitFlash(
+    const protocol::PlayerState& player,
+    const game::presentation::PlayerPresentation& visual
+) {
+    const bool authoritativeHit = visual.animation == game::presentation::AnimationState::Hit;
+    if (visual.hitFlashSeconds <= 0.0F && visual.damageTextSeconds <= 0.0F
+        && !authoritativeHit) {
         return;
     }
     const auto position = ScreenPosition(player);
-    if (visual.hitFlash > 0.0F) {
-        const float remaining = std::clamp(visual.hitFlash / kHitFlashDuration, 0.0F, 1.0F);
+    if (visual.hitFlashSeconds > 0.0F || authoritativeHit) {
+        const float remaining = visual.hitFlashSeconds > 0.0F
+            ? std::clamp(visual.hitFlashSeconds / kHitFlashDuration, 0.0F, 1.0F)
+            : 1.0F;
         DrawCircleV(position, 27.0F, WithAlpha(WHITE, 95.0F * remaining));
         DrawCircleLines(
             static_cast<int>(position.x),
@@ -121,10 +136,14 @@ void DrawHitFlash(const ::game::v1::PlayerState& player, const PlayerVisualState
             WithAlpha(YELLOW, 220.0F * remaining)
         );
     }
-    if (visual.damageText > 0.0F && visual.damage > 0) {
-        const float remaining = std::clamp(visual.damageText / kDamageTextDuration, 0.0F, 1.0F);
+    if (visual.damageTextSeconds > 0.0F && visual.lastDamage > 0) {
+        const float remaining = std::clamp(
+            visual.damageTextSeconds / kDamageTextDuration,
+            0.0F,
+            1.0F
+        );
         const float rise = 28.0F * (1.0F - remaining);
-        const std::string text = "-" + std::to_string(visual.damage);
+        const std::string text = "-" + std::to_string(visual.lastDamage);
         DrawText(
             text.c_str(),
             static_cast<int>(position.x - 12),
@@ -147,7 +166,7 @@ const char* ActionLabel(game::input::Action action) {
     return "Unknown";
 }
 
-void DrawPlayer(const ::game::v1::PlayerState& player, Color color) {
+void DrawPlayer(const protocol::PlayerState& player, Color color) {
     const auto position = ScreenPosition(player);
     const auto direction = FacingDirection(player);
     DrawCircleV(position, 22.0F, color);
@@ -157,12 +176,12 @@ void DrawPlayer(const ::game::v1::PlayerState& player, Color color) {
         3.0F,
         RAYWHITE
     );
-    DrawText(player.player_id().c_str(), static_cast<int>(position.x - 30), static_cast<int>(position.y - 45), 12, RAYWHITE);
+    DrawText(player.playerId.c_str(), static_cast<int>(position.x - 30), static_cast<int>(position.y - 45), 12, RAYWHITE);
     DrawRectangle(static_cast<int>(position.x - 30), static_cast<int>(position.y + 30), 60, 7, DARKGRAY);
     DrawRectangle(
         static_cast<int>(position.x - 30),
         static_cast<int>(position.y + 30),
-        static_cast<int>(60.0F * std::clamp(static_cast<float>(player.hp()) / 100.0F, 0.0F, 1.0F)),
+        static_cast<int>(60.0F * std::clamp(static_cast<float>(player.hp) / 100.0F, 0.0F, 1.0F)),
         7,
         color
     );
@@ -259,14 +278,11 @@ SettingsScreenEvent DrawSettings(
 }
 
 void DrawMatch(
-    const ::game::v1::WorldSnapshot& world,
-    const std::string& localPlayerId,
-    std::uint32_t serverTickRate,
-    const duel::game::Prediction& prediction,
-    const duel::game::InterpolationBuffer& opponentInterpolation,
-    const std::unordered_map<std::string, PlayerVisualState>& playerVisuals,
+    const game::match::MatchModel& model,
+    const game::presentation::MatchPresentation& presentation,
     const game::input::InputBindings& bindings
 ) {
+    const auto& world = model.World();
     DrawRectangleLines(290, 150, 700, 420, GRAY);
     const auto attack = bindings.InputFor(game::input::Action::LightAttack);
     const auto dash = bindings.InputFor(game::input::Action::Dash);
@@ -277,53 +293,54 @@ void DrawMatch(
         + " | Dash: " + std::string(inputName(dash));
     DrawText(controls.c_str(), 24, 20, 20, LIGHTGRAY);
     std::string clockText = "Waiting for match start";
-    if (world.status() == ::game::v1::MATCH_STATUS_COUNTDOWN) {
+    if (world.status == protocol::MatchStatus::Countdown) {
         clockText = "Starts in " + std::to_string(duel::game::TicksToDisplaySeconds(
-            world.countdown_ticks_remaining(), serverTickRate));
-    } else if (world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
+            world.countdownTicksRemaining, model.TickRate()));
+    } else if (world.status == protocol::MatchStatus::Active) {
         clockText = "Time: " + std::to_string(duel::game::TicksToDisplaySeconds(
-            world.match_ticks_remaining(), serverTickRate));
+            world.matchTicksRemaining, model.TickRate()));
     }
     DrawText(clockText.c_str(), 560, 90, 28, GOLD);
-    for (int index = 0; index < world.players_size(); ++index) {
-        auto player = world.players(index);
-        const bool isLocal = player.player_id() == localPlayerId;
+    for (auto player : world.players) {
+        const bool isLocal = player.playerId == model.LocalPlayerId();
         const std::string hp = std::string(isLocal ? "Your HP: " : "Opponent HP: ")
-            + std::to_string(player.hp());
+            + std::to_string(player.hp);
         DrawText(hp.c_str(), isLocal ? 24 : 1060, 50, 18, isLocal ? SKYBLUE : RED);
-        if (isLocal && world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
-            const auto visual = prediction.VisualPosition();
-            player.set_position_x(visual.x);
-            player.set_position_y(visual.y);
-        } else if (!isLocal && world.status() == ::game::v1::MATCH_STATUS_ACTIVE) {
-            const auto interpolated = opponentInterpolation.Sample();
-            player.set_position_x(static_cast<std::int32_t>(std::lround(interpolated.x)));
-            player.set_position_y(static_cast<std::int32_t>(std::lround(interpolated.y)));
+        if (isLocal && world.status == protocol::MatchStatus::Active) {
+            const auto visual = model.LocalPrediction().VisualPosition();
+            player.positionX = visual.x;
+            player.positionY = visual.y;
+        } else if (!isLocal && world.status == protocol::MatchStatus::Active) {
+            const auto interpolated = model.OpponentInterpolation().Sample();
+            player.positionX = static_cast<std::int32_t>(std::lround(interpolated.x));
+            player.positionY = static_cast<std::int32_t>(std::lround(interpolated.y));
         }
-        const auto visualIt = playerVisuals.find(player.player_id());
-        const PlayerVisualState visual = visualIt != playerVisuals.end()
-            ? visualIt->second
-            : PlayerVisualState{};
-        DrawAttackPulse(player, visual);
+        const auto* visual = presentation.ViewFor(player.playerId);
+        const auto emptyVisual = game::presentation::PlayerPresentation{};
+        const auto& resolvedVisual = visual != nullptr ? *visual : emptyVisual;
+        DrawAttackPulse(player, resolvedVisual);
         DrawPlayer(player, isLocal ? SKYBLUE : RED);
-        DrawHitFlash(player, visual);
+        DrawHitFlash(player, resolvedVisual);
     }
 }
 
 ResultAction DrawResult(
-    const ::game::v1::MatchEnd& matchEnd,
-    const ::game::v1::WorldSnapshot& world,
-    const std::string& localPlayerId,
+    const game::match::MatchModel& model,
     const std::string& message
 ) {
-    const std::string result = duel::game::MatchResultLabel(matchEnd, localPlayerId);
+    if (!model.End()) {
+        return ResultAction::None;
+    }
+    const auto& matchEnd = *model.End();
+    const auto& world = model.World();
+    const std::string result = duel::game::MatchResultLabel(matchEnd, model.LocalPlayerId());
     DrawText(result.c_str(), 540, 150, 40, GOLD);
     DrawText(message.c_str(), 560, 210, 24, LIGHTGRAY);
-    for (int index = 0; index < world.players_size(); ++index) {
-        const auto& player = world.players(index);
-        const std::string hp = player.player_id() + ": " + std::to_string(player.hp()) + " HP";
-        DrawText(hp.c_str(), 520, 260 + 32 * index, 20,
-            player.player_id() == localPlayerId ? SKYBLUE : RED);
+    for (std::size_t index = 0; index < world.players.size(); ++index) {
+        const auto& player = world.players[index];
+        const std::string hp = player.playerId + ": " + std::to_string(player.hp) + " HP";
+        DrawText(hp.c_str(), 520, 260 + 32 * static_cast<int>(index), 20,
+            player.playerId == model.LocalPlayerId() ? SKYBLUE : RED);
     }
     if (Button(Rectangle{390, 370, 240, 52}, "Back to menu")) {
         return ResultAction::BackToMenu;

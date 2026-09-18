@@ -1,14 +1,11 @@
 #pragma once
 
 #include "game/input/input.h"
-#include "game/interpolation.h"
-#include "game/prediction.h"
-#include "game/v1/duel.pb.h"
+#include "game/match/match_model.h"
+#include "game/presentation/match_presentation.h"
 
-#include <cstdint>
 #include <optional>
 #include <string>
-#include <unordered_map>
 
 namespace duel::app::screens {
 
@@ -20,14 +17,6 @@ enum class SettingsAction { None, Save, ResetDefaults, Back };
 struct SettingsScreenEvent {
     SettingsAction action = SettingsAction::None;
     std::optional<game::input::Action> captureAction;
-};
-
-struct PlayerVisualState {
-    int hp = -1;
-    int damage = 0;
-    float attackFlash = 0.0F;
-    float hitFlash = 0.0F;
-    float damageText = 0.0F;
 };
 
 LoginAction DrawLogin(
@@ -55,19 +44,13 @@ SettingsScreenEvent DrawSettings(
 );
 
 void DrawMatch(
-    const ::game::v1::WorldSnapshot& world,
-    const std::string& localPlayerId,
-    std::uint32_t serverTickRate,
-    const duel::game::Prediction& prediction,
-    const duel::game::InterpolationBuffer& opponentInterpolation,
-    const std::unordered_map<std::string, PlayerVisualState>& playerVisuals,
+    const game::match::MatchModel& model,
+    const game::presentation::MatchPresentation& presentation,
     const game::input::InputBindings& bindings
 );
 
 ResultAction DrawResult(
-    const ::game::v1::MatchEnd& matchEnd,
-    const ::game::v1::WorldSnapshot& world,
-    const std::string& localPlayerId,
+    const game::match::MatchModel& model,
     const std::string& message
 );
 

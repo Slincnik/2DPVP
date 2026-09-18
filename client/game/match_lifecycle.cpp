@@ -21,21 +21,22 @@ std::uint32_t TicksToDisplaySeconds(std::uint32_t ticks, std::uint32_t tickRate)
     return (ticks + tickRate - 1) / tickRate;
 }
 
-std::string MatchResultLabel(const ::game::v1::MatchEnd& matchEnd, const std::string& playerId) {
-    if (matchEnd.winner_player_id().empty()) {
+std::string MatchResultLabel(const protocol::MatchEnd& matchEnd, const std::string& playerId) {
+    if (matchEnd.winnerPlayerId.empty()) {
         return "DRAW";
     }
-    return matchEnd.winner_player_id() == playerId ? "YOU WIN" : "YOU LOSE";
+    return matchEnd.winnerPlayerId == playerId ? "YOU WIN" : "YOU LOSE";
 }
 
-std::string MatchFinishReasonLabel(::game::v1::MatchFinishReason reason) {
+std::string MatchFinishReasonLabel(protocol::MatchFinishReason reason) {
     switch (reason) {
-    case ::game::v1::MATCH_FINISH_REASON_KO:
+    case protocol::MatchFinishReason::KO:
         return "Knockout";
-    case ::game::v1::MATCH_FINISH_REASON_TIME_LIMIT:
+    case protocol::MatchFinishReason::TimeLimit:
         return "Time limit";
-    case ::game::v1::MATCH_FINISH_REASON_DISCONNECT:
+    case protocol::MatchFinishReason::Disconnect:
         return "Opponent disconnected";
+    case protocol::MatchFinishReason::Unspecified:
     default:
         return "Match finished";
     }

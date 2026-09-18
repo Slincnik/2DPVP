@@ -35,7 +35,10 @@ deprecated и симуляцией v2 не читается.
 `PlayerState.action_state`, `action_started_server_tick` и
 `action_ticks_remaining` являются authoritative timeline для клиента. Datagram
 loss не требует восстановления visual event history: новый snapshot полностью
-описывает текущую phase.
+описывает текущую phase. Клиент предсказывает только held-перемещение. Dash
+показывается после authoritative snapshot: текущий `MatchStart` ещё не передаёт
+версионированные geometry/ruleset параметры, поэтому локальная dash prediction
+до появления такого контракта намеренно отключена.
 
 ## Framing reliable stream
 
